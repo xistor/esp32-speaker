@@ -1,0 +1,8 @@
+menu "X Spaker Configuration"
+    config SPAKER_DEVICE_NAME
+        string "Local Device Name"
+        default "X_SPEAKER"
+        help
+            Use this option to set local device name.
+
+endmenu
