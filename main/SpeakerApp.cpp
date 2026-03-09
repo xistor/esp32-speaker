@@ -138,7 +138,10 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
 
         if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTING) {
             ESP_LOGI(TAG, "A2DP connecting, installing I2S driver");
-            _audio_i2s.start();
+            AudioI2sError err = _audio_i2s.start();
+            if( err != AudioI2sError::NONE) {
+                ESP_LOGE(TAG, "Failed to start audio i2s err: %d", static_cast<int>(err));
+            }
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED) {
             ESP_LOGI(TAG, "A2DP connected, set scan mode to non-connectable and non-discoverable, enable I2S channel");
             setScanModeConnectable(false, false);

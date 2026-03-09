@@ -49,7 +49,7 @@ private:
     void setScanModeConnectable(bool conn, bool discoverable);
 
     AudioI2s _audio_i2s;
-    const char *_device_name = CONFIG_SPAKER_DEVICE_NAME;
+    const char *_device_name = CONFIG_SPEAKER_DEVICE_NAME;
 
     static SpeakerApp *s_instance;
 };

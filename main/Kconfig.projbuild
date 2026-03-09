@@ -1,5 +1,5 @@
-menu "X Spaker Configuration"
-    config SPAKER_DEVICE_NAME
+menu "X Speaker Configuration"
+    config SPEAKER_DEVICE_NAME
         string "Local Device Name"
         default "X_SPEAKER"
         help

@@ -68,6 +68,7 @@ AudioI2sError AudioI2s::start()
     }
 
     _running.store(true);
+
     try {
         _i2s_task_thread = std::thread(&AudioI2s::i2sTask, this);
     } catch (const std::system_error &e) {
@@ -85,6 +86,7 @@ AudioI2sError AudioI2s::start()
 void AudioI2s::stop()
 {
     if (!_running.load()) {
+        ESP_LOGW(X_AUDIO_I2S_TAG, "stop() called while not running");
         return;
     }
 
@@ -100,6 +102,11 @@ void AudioI2s::stop()
         ESP_ERROR_CHECK(i2s_channel_disable(_tx_chan));
         ESP_ERROR_CHECK(i2s_del_channel(_tx_chan));
         _tx_chan = nullptr;
+    }
+
+    if(_ringbuf_i2s) {
+        vRingbufferDelete(_ringbuf_i2s);
+        _ringbuf_i2s = nullptr;
     }
 
     ESP_LOGI(X_AUDIO_I2S_TAG, "AudioI2s::stop done");

@@ -3,4 +3,4 @@
 cmake_minimum_required(VERSION 3.22)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(x_spaker_2.0)
+project(x_speaker_2.0)

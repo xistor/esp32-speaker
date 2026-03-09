@@ -9,7 +9,7 @@
 
 extern "C" void app_main(void)
 {
-    SpeakerApp app;
+    static SpeakerApp app;
 
     /* configure I2S before initializing Bluetooth so the object is ready
        when a connection arrives. */
