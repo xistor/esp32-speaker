@@ -3,16 +3,12 @@
 
 #include "SpeakerApp.h"
 
-#define I2S_BCK_PIN     26
-#define I2S_LRCK_PIN    27
-#define I2S_DATA_PIN    25
 
 extern "C" void app_main(void)
 {
     static SpeakerApp app;
 
-    /* configure I2S before initializing Bluetooth so the object is ready
-       when a connection arrives. */
+
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
     i2s_std_config_t std_cfg = {
@@ -20,9 +16,9 @@ extern "C" void app_main(void)
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
-            .bclk = (gpio_num_t)I2S_BCK_PIN,
-            .ws = (gpio_num_t)I2S_LRCK_PIN,
-            .dout = (gpio_num_t)I2S_DATA_PIN,
+            .bclk = (gpio_num_t)CONFIG_I2S_BCK_PIN,
+            .ws = (gpio_num_t)CONFIG_I2S_LRCK_PIN,
+            .dout = (gpio_num_t)CONFIG_I2S_DATA_PIN,
             .din = I2S_GPIO_UNUSED,
             .invert_flags = {
                 .mclk_inv = false,
