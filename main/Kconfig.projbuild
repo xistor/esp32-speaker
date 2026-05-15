@@ -59,31 +59,31 @@ menu "X Speaker Configuration"
 
     config LCD_CS
         int "LCD Chip Select GPIO"
-        default 18
+        default 5
         help
             LCD chip select pin GPIO number.
 
     config LCD_DC
         int "LCD Data/Command GPIO"
-        default 4
+        default 2
         help
             LCD data/command pin GPIO number.
 
     config LCD_RST
         int "LCD Reset GPIO"
-        default 16
+        default 15
         help
             LCD reset pin GPIO number.
 
     config LCD_MOSI
         int "LCD MOSI GPIO"
-        default 5
+        default 4
         help
             LCD MOSI pin.
 
     config LCD_CLK
         int "LCD CLK GPIO"
-        default 17
+        default 0
         help
             LCD clock pin.
 
@@ -91,13 +91,13 @@ menu "X Speaker Configuration"
 # "Touch panel configuration"
     config TOUCH_I2C_SCL
         int "Touch I2C SCL GPIO"
-        default 21
+        default 23
         help
             Touch panel I2C SCL pin GPIO number.
 
     config TOUCH_I2C_SDA
         int "Touch I2C SDA GPIO"
-        default 19
+        default 18
         help
             Touch panel I2C SDA pin GPIO number.
 
@@ -108,7 +108,7 @@ menu "X Speaker Configuration"
             Touch panel interrupt pin.
     config TOUCH_GPIO_RESET
         int "Touch GPIO RESET"
-        default 23
+        default 19
         help
             Touch panel reset pin.
     config TOUCH_I2C_NUM

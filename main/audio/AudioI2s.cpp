@@ -69,18 +69,11 @@ AudioI2sError AudioI2s::start()
 
     _running.store(true);
 
-    try {
-        _i2s_task_thread = std::thread(&AudioI2s::i2sTask, this);
-    } catch (const std::system_error &e) {
-        ESP_LOGE(X_AUDIO_I2S_TAG, "thread start failed: %s", e.what());
-        _running.store(false);
-        return AudioI2sError::THREAD_START_FAILED;
-    }
+    _i2s_task_thread = std::thread(&AudioI2s::i2sTask, this);
 
     ESP_LOGI(X_AUDIO_I2S_TAG, "AudioI2s::start success");
     return AudioI2sError::NONE;
 }
-
 
 
 void AudioI2s::stop()

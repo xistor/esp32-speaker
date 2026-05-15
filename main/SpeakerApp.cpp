@@ -4,6 +4,7 @@
 #include "display/LvglManager.h"
 #include <cstring>
 #include "esp_spiffs.h"
+#include "jpeg_decoder.h"
 
 SpeakerApp *SpeakerApp::s_instance = nullptr;
 
@@ -33,6 +34,8 @@ esp_err_t SpeakerApp::init()
 
     /* release the controller memory for Bluetooth Low Energy. */
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
+
+    _msg_handler_thread = std::thread(&SpeakerApp::msgHandler, this);
 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     if ((err = esp_bt_controller_init(&bt_cfg)) != ESP_OK) {
@@ -120,15 +123,20 @@ void SpeakerApp::configureI2s(const i2s_chan_config_t &chan_cfg,
 /* static callbacks */
 void SpeakerApp::a2dCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param)
 {
-    if (s_instance) {
-        s_instance->handleA2dpEvent(event, param);
+    if (s_instance){
+        s_instance->msgDispatch([event](uint16_t evt, void *p) {
+            s_instance->handleA2dpEvent(event, (esp_a2d_cb_param_t *)p);
+        }, event, param, sizeof(esp_a2d_cb_param_t));
     }
+
 }
 
 void SpeakerApp::gapCallback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 {
-    if (s_instance) {
-        s_instance->handleGapEvent(event, param);
+    if (s_instance){
+        s_instance->msgDispatch([event](uint16_t evt, void *p) {
+            s_instance->handleGapEvent(event, (esp_bt_gap_cb_param_t *)p);
+        }, event, param, sizeof(esp_bt_gap_cb_param_t));
     }
 }
 
@@ -141,15 +149,47 @@ void SpeakerApp::a2dDataCallback(const uint8_t *data, uint32_t len)
 
 void SpeakerApp::rcCtrlCallback(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param)
 {
-    if (s_instance) {
-        s_instance->handleRcCtrlEvent(event, param);
+    switch(event) {
+        case ESP_AVRC_CT_METADATA_RSP_EVT:
+            s_instance->msgDispatch([event](uint16_t evt, void *p) {
+                        s_instance->handleRcCtrlEvent(event, (esp_avrc_ct_cb_param_t *)p);
+                    }, event, param, sizeof(esp_avrc_ct_cb_param_t), SpeakerApp::avrcCommonnCopyMetaData, SpeakerApp::avrcCommonFreeMetaData);
+            break;
+        case ESP_AVRC_CT_COVER_ART_DATA_EVT:
+
+            if (param->cover_art_data.status == ESP_BT_STATUS_SUCCESS) {
+                s_instance->saveCoverImageData(param->cover_art_data.p_data, param->cover_art_data.data_len);
+            } else {
+                ESP_LOGW(_XSPK_TAG, "Cover Art Client get operation failed");
+                break;
+            }
+            s_instance->msgDispatch([event](uint16_t evt, void *p) {
+                        s_instance->handleRcCtrlEvent(event, (esp_avrc_ct_cb_param_t *)p);
+                    }, event, param, sizeof(esp_avrc_ct_cb_param_t));
+            break;
+        case ESP_AVRC_CT_CONNECTION_STATE_EVT:
+        case ESP_AVRC_CT_PASSTHROUGH_RSP_EVT:
+        case ESP_AVRC_CT_CHANGE_NOTIFY_EVT:
+        case ESP_AVRC_CT_REMOTE_FEATURES_EVT:
+        case ESP_AVRC_CT_GET_RN_CAPABILITIES_RSP_EVT:
+        case ESP_AVRC_CT_COVER_ART_STATE_EVT:
+        case ESP_AVRC_CT_PROF_STATE_EVT:
+            s_instance->msgDispatch([event](uint16_t evt, void *p) {
+                        s_instance->handleRcCtrlEvent(event, (esp_avrc_ct_cb_param_t *)p);
+                    }, event, param, sizeof(esp_avrc_ct_cb_param_t));
+            break;
+        default:
+            break;
     }
+        
 }
 
 void SpeakerApp::rcTgCallback(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param)
 {
-    if (s_instance) {
-        s_instance->handleRcTgEvent(event, param);
+    if (s_instance){
+        s_instance->msgDispatch([event](uint16_t evt, void *p) {
+            s_instance->handleRcTgEvent(event, (esp_avrc_tg_cb_param_t *)p);
+        }, event, param, sizeof(esp_avrc_tg_cb_param_t));
     }
 }
 
@@ -190,6 +230,11 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
         break;
     case ESP_A2D_AUDIO_STATE_EVT:
         ESP_LOGI(_XSPK_TAG, "A2DP audio state changed: %d", param->audio_stat.state);
+        // if( param->audio_stat.state == ESP_A2D_AUDIO_STATE_STARTED) {
+        //     _ui_music_player.setPlaying(true);
+        // } else {
+        //     _ui_music_player.setPlaying(false);
+        // }
         break;
     case ESP_A2D_AUDIO_CFG_EVT:
         ESP_LOGI(_XSPK_TAG, "A2DP audio config changed: codec type %d", param->audio_cfg.mcc.type);
@@ -324,13 +369,17 @@ void SpeakerApp::handleA2dpData(const uint8_t *data, uint32_t len)
 void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param)
 {
     ESP_LOGI(_XSPK_TAG, "AVRCP Controller event: %d", event);
+
+
+
     // Handle AVRCP controller events here (e.g., connection state changes, passthrough responses, etc.)
     switch (event) {
         case ESP_AVRC_CT_CONNECTION_STATE_EVT: {
             if (param->conn_stat.connected) {
                 ESP_LOGI(_XSPK_TAG, "AVRCP connected...");
                 esp_avrc_ct_send_metadata_cmd(1, ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_ALBUM);
-                esp_avrc_ct_send_register_notification_cmd(1, ESP_AVRC_RN_TRACK_CHANGE, 0);
+                esp_avrc_ct_send_register_notification_cmd(2, ESP_AVRC_RN_TRACK_CHANGE, 0);
+                esp_avrc_ct_send_get_rn_capabilities_cmd(0);
             }
             break;
         }
@@ -345,17 +394,104 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
             } else if (param->meta_rsp.attr_id == ESP_AVRC_MD_ATTR_ARTIST) {
                 ESP_LOGI(_XSPK_TAG, "Artist: %s", text);
                 _ui_music_player.setArtist(text);
+            } else if (param->meta_rsp.attr_id == ESP_AVRC_MD_ATTR_COVER_ART) {
+
+                if(memcmp(_cover_image_handler, param->meta_rsp.attr_text, 7) != 0) {
+                    ESP_LOGI(_XSPK_TAG, "New cover art image handler received: %s, len: %d", param->meta_rsp.attr_text, param->meta_rsp.attr_length);
+                    memcpy(_cover_image_handler, param->meta_rsp.attr_text, 7);
+                    // esp_avrc_ct_cover_art_get_image_properties(_cover_image_handler);
+                    esp_avrc_ct_cover_art_get_linked_thumbnail(_cover_image_handler);
+                    _cover_image_size = 0;
+                    if(_cover_image_data) {
+                        free(_cover_image_data);
+                        _cover_image_data = nullptr;
+                    }
+                } else {
+                    ESP_LOGI(_XSPK_TAG, "Same cover art image handler received, ignoring: %s", param->meta_rsp.attr_text);
+                }
+
             }
+
             free(text);
             break;
         }
         case ESP_AVRC_CT_CHANGE_NOTIFY_EVT: {
             if (param->change_ntf.event_id == ESP_AVRC_RN_TRACK_CHANGE) {
                 esp_avrc_ct_send_metadata_cmd(1, ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST);
-                esp_avrc_ct_send_register_notification_cmd(1, ESP_AVRC_RN_TRACK_CHANGE, 0);
+                esp_avrc_ct_send_register_notification_cmd(2, ESP_AVRC_RN_TRACK_CHANGE, 0);
+                esp_avrc_ct_send_metadata_cmd(3, ESP_AVRC_MD_ATTR_COVER_ART);
+
             }
             break;
         }
+        case ESP_AVRC_CT_GET_RN_CAPABILITIES_RSP_EVT: {
+            /* request the cover art */
+            esp_avrc_ct_send_metadata_cmd(1, ESP_AVRC_MD_ATTR_COVER_ART);
+            break;
+        }
+        case ESP_AVRC_CT_REMOTE_FEATURES_EVT: {
+            ESP_LOGI(_XSPK_TAG, "AVRC remote features %" PRIx32", TG features %x", param->rmt_feats.feat_mask, param->rmt_feats.tg_feat_flag);
+            if ((param->rmt_feats.tg_feat_flag & ESP_AVRC_FEAT_FLAG_TG_COVER_ART)) {
+                ESP_LOGW(_XSPK_TAG, "Peer support Cover Art feature");
+                /* start the cover art connection */
+                esp_avrc_ct_cover_art_connect(1024);
+            }
+            break;
+        }
+        case ESP_AVRC_CT_COVER_ART_STATE_EVT: {
+            if (param->cover_art_state.state == ESP_AVRC_COVER_ART_CONNECTED) {
+                ESP_LOGW(_XSPK_TAG, "Cover Art Client connected");
+                /* request the cover art */
+                esp_avrc_ct_send_metadata_cmd(1, ESP_AVRC_MD_ATTR_COVER_ART);
+            } else {
+                ESP_LOGW(_XSPK_TAG, "Cover Art Client disconnected, reason:%d", param->cover_art_state.reason);
+            }
+            break;
+        }
+        case ESP_AVRC_CT_COVER_ART_DATA_EVT:
+        {
+            esp_err_t ret = ESP_OK;
+
+
+            if ( param->cover_art_data.final) {
+                ESP_LOGI(_XSPK_TAG, "Final cover art data received, total size: %d", _cover_image_size);
+
+                /* decode and display the image */
+                if(_cover_pixels) {
+                    free(_cover_pixels);
+                    _cover_pixels = nullptr;
+                }
+                _cover_pixels = (uint16_t *)calloc(200 * 200, sizeof(uint16_t));
+
+                /* JPEG decode config */
+                esp_jpeg_image_cfg_t jpeg_cfg = {
+                    .indata = (uint8_t *)_cover_image_data,
+                    .indata_size = _cover_image_size,
+                    .outbuf = (uint8_t*)(_cover_pixels),
+                    .outbuf_size = 200 * 200 * sizeof(uint16_t),
+                    .out_format = JPEG_IMAGE_FORMAT_RGB565,
+                    .out_scale = JPEG_IMAGE_SCALE_0,
+                    .flags = {
+                        .swap_color_bytes = 1,
+                    }
+                };
+
+                /* JPEG decode */
+                esp_jpeg_image_output_t outimg;
+                ret = esp_jpeg_decode(&jpeg_cfg, &outimg);
+                /* display the image */
+
+                if (ret == ESP_OK) {
+                    ESP_LOGI(_XSPK_TAG, "JPEG decode successful, image size: %d x %d", outimg.width, outimg.height);
+                    _ui_music_player.setCoverArt(( uint8_t *)_cover_pixels);
+                } else {
+                    ESP_LOGE(_XSPK_TAG, "JPEG decode failed: %s", esp_err_to_name(ret));
+                }
+            }
+
+            break;
+        }
+
         default:
             break;
     }
@@ -365,4 +501,120 @@ void SpeakerApp::handleRcTgEvent(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_pa
 {
     ESP_LOGI(_XSPK_TAG, "AVRCP Target event: %d", event);
     // Handle AVRCP target events here (e.g., connection state changes, passthrough responses, etc.)
+}
+
+bool SpeakerApp::msgDispatch(BtAppCallback callback, uint16_t event, void *p_params, int param_len, BtAppCopyCallback copy_callback, DeepFreeCallback free_callback)
+{
+    if (s_instance) {
+        // s_instance->handleA2dpEvent(event, param);
+        bt_app_msg_t msg;
+        memset(&msg, 0, sizeof(msg));
+
+        msg.event = event;
+        msg.callback = callback;
+
+
+        if (param_len == 0) {
+            s_instance->pushBtMsg(msg);
+            return true;
+        } else if (p_params && param_len > 0) {
+            if ((msg.param = malloc(param_len)) != NULL) {
+                memcpy(msg.param, p_params, param_len);
+                if(copy_callback)
+                {
+                    copy_callback(msg.param, p_params, param_len);
+                }
+                
+                if(free_callback)
+                {
+                    msg.free_callback = free_callback;
+                }
+                s_instance->pushBtMsg(msg);
+                return true;
+            }
+        }
+    }
+    return false;
+
+}
+
+void SpeakerApp::msgHandler() {
+    while (true) {
+        bt_app_msg_t msg = _bt_msg_queue.take();
+
+        ESP_LOGI(_XSPK_TAG, "Processing Bluetooth event: %d", msg.event);
+        if(msg.callback)
+        {
+            msg.callback(msg.event, msg.param);
+        }
+
+        if (msg.param) {
+            free(msg.param);
+        }
+
+    }
+}
+
+void SpeakerApp::pushBtMsg(const bt_app_msg_t &msg) {
+    _bt_msg_queue.put(msg);
+}
+
+void SpeakerApp::avrcCommonnCopyMetaData(void *p_dest, void *p_src, int len)
+{
+    if (p_dest == nullptr || p_src == nullptr) {
+        ESP_LOGE("SPEAKER_APP", "avrcCommonnCopyMetaData: Blocked null pointer structure map!");
+        return;
+    }
+
+    esp_avrc_ct_cb_param_t *p_dest_rc = (esp_avrc_ct_cb_param_t *)(p_dest);
+    esp_avrc_ct_cb_param_t *p_src_rc = (esp_avrc_ct_cb_param_t *)(p_src);
+
+    p_dest_rc->meta_rsp.attr_id = p_src_rc->meta_rsp.attr_id;
+    p_dest_rc->meta_rsp.attr_length = p_src_rc->meta_rsp.attr_length;
+
+    ESP_LOGI("SPEAKER_APP", "avrcCommonnCopyMetaData: Copying metadata attr_id=%d, attr_length=%d", p_src_rc->meta_rsp.attr_id, p_src_rc->meta_rsp.attr_length);
+    uint8_t *p_attr_text = (uint8_t *) malloc(p_dest_rc->meta_rsp.attr_length + 1);
+    if (p_attr_text == nullptr) {
+        ESP_LOGE("SPEAKER_APP", "avrcCommonnCopyMetaData: Failed to allocate memory for attr_text!");
+        return;
+    }
+    p_dest_rc->meta_rsp.attr_text = p_attr_text;
+
+    memcpy(p_dest_rc->meta_rsp.attr_text, p_src_rc->meta_rsp.attr_text, p_dest_rc->meta_rsp.attr_length);
+    p_dest_rc->meta_rsp.attr_text[p_dest_rc->meta_rsp.attr_length] = 0;
+}
+
+void SpeakerApp::avrcCommonFreeMetaData(void *ptr)
+{
+    if (ptr == nullptr) {
+        ESP_LOGE("SPEAKER_APP", "avrcCommonFreeMetaData: Blocked null pointer free!");
+        return;
+    }
+
+    esp_avrc_ct_cb_param_t *p_rc = (esp_avrc_ct_cb_param_t *)(ptr);
+    if (p_rc->meta_rsp.attr_text) {
+        free(p_rc->meta_rsp.attr_text);
+        p_rc->meta_rsp.attr_text = nullptr;
+    }
+}
+
+void SpeakerApp::saveCoverImageData(const uint8_t *data, uint32_t data_len)
+{
+   _cover_image_size += data_len;
+
+    ESP_LOGI(_XSPK_TAG, "Received cover art data: %d, Total size: %d", data_len, _cover_image_size);
+    // size_t free_heap = esp_get_free_heap_size();
+    // ESP_LOGI(_XSPK_TAG, "Current free heap size: %d bytes", free_heap);
+    uint8_t *p_buf = (uint8_t *)realloc(_cover_image_data, _cover_image_size * sizeof(uint8_t));
+    // uint8_t *p_buf = (uint8_t *)heap_caps_realloc(image_data, image_size * sizeof(uint8_t), MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+    if (!p_buf) {
+        ESP_LOGE(_XSPK_TAG, "%s: The memory allocation of Cover art image data failed", __func__);
+        if (_cover_image_data) {
+            free(_cover_image_data);
+            _cover_image_data = nullptr;
+        }
+        return;
+    }
+    _cover_image_data = p_buf;
+    memcpy(_cover_image_data + _cover_image_size - data_len, data, data_len);
 }

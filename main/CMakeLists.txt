@@ -5,7 +5,7 @@ file(GLOB_RECURSE SOURCES
     "fonts/*.c"
 )
 idf_component_register(SRCS ${SOURCES}
-                    INCLUDE_DIRS "." "audio" "display")
+                    INCLUDE_DIRS "." "audio" "display" "common")
 
 target_compile_options(${COMPONENT_LIB} PRIVATE 
                     $<$<COMPILE_LANGUAGE:CXX>:

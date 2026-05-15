@@ -24,22 +24,23 @@ void UiMusicPlayer::create_ui()
         return;
     }
 
-
     // 1. Background Container
     lv_obj_t * main_cont = lv_obj_create(lv_scr_act());
     lv_obj_set_size(main_cont, 240, 320);
     lv_obj_set_style_bg_color(main_cont, lv_color_hex(0x000000), 0);
     lv_obj_set_style_border_width(main_cont, 0, 0);
     lv_obj_set_style_radius(main_cont, 0, 0);
+    lv_obj_remove_flag(main_cont, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_center(main_cont);
 
     // 2. Album Art - Now at the TOP
-    _album_art = lv_obj_create(main_cont);
-    lv_obj_set_size(_album_art, 120, 120); // Slightly larger for better visual impact
-    lv_obj_set_style_radius(_album_art, 20, 0); // Rounded rectangle looks modern
-    lv_obj_set_style_bg_color(_album_art, lv_color_hex(0x333333), 0);
+     _album_art = lv_image_create(main_cont);
+    lv_obj_set_size(_album_art, 130, 130);
+    lv_obj_set_style_bg_color(_album_art, lv_color_hex(0x1A1A1A), 0);
     lv_obj_set_style_border_width(_album_art, 0, 0);
+    lv_obj_set_style_pad_all(_album_art, 0, 0);
     lv_obj_align(_album_art, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_clear_flag(_album_art, LV_OBJ_FLAG_SCROLLABLE);
 
     // 3. Song Title - Positioned BELOW Album Art
     _title = lv_label_create(main_cont);
@@ -75,23 +76,22 @@ void UiMusicPlayer::create_ui()
     lv_obj_set_style_radius(btn_play, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(btn_play, lv_color_hex(0xFFFFFF), 0);
     lv_obj_align(btn_play, LV_ALIGN_BOTTOM_MID, 0, -20);
-    
-    lv_obj_t * play_label = lv_label_create(btn_play);
-    lv_label_set_text(play_label, LV_SYMBOL_PLAY);
-    lv_obj_set_style_text_color(play_label, lv_color_hex(0x000000), 0);
-    lv_obj_center(play_label);
+
+    lv_obj_t * _play_label = lv_label_create(btn_play);
+    lv_label_set_text(_play_label, LV_SYMBOL_PLAY);
+    lv_obj_set_style_text_color(_play_label, lv_color_hex(0x000000), 0);
+    lv_obj_center(_play_label);
     lv_obj_add_event_cb(btn_play, play_pause_event_cb, LV_EVENT_RELEASED, NULL);
 
     // --- prev ---
     lv_obj_t * btn_prev = lv_btn_create(main_cont);
     lv_obj_set_size(btn_prev, 60, 60);
     lv_obj_align_to(btn_prev, btn_play, LV_ALIGN_OUT_LEFT_MID, -15, 0);
-    
 
     lv_obj_set_style_bg_opa(btn_prev, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(btn_prev, 0, 0);
     lv_obj_set_style_border_width(btn_prev, 0, 0);
-    
+
     lv_obj_t * label_prev = lv_label_create(btn_prev);
     lv_label_set_text(label_prev, LV_SYMBOL_PREV);
     lv_obj_set_style_text_font(label_prev, &awsome_14, 0);
@@ -102,12 +102,11 @@ void UiMusicPlayer::create_ui()
     lv_obj_t * btn_next = lv_btn_create(main_cont);
     lv_obj_set_size(btn_next, 60, 60);
     lv_obj_align_to(btn_next, btn_play, LV_ALIGN_OUT_RIGHT_MID, 15, 0);
-    
 
     lv_obj_set_style_bg_opa(btn_next, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(btn_next, 0, 0);
     lv_obj_set_style_border_width(btn_next, 0, 0);
-    
+
     lv_obj_t * label_next = lv_label_create(btn_next);
     lv_label_set_text(label_next, LV_SYMBOL_NEXT);
     lv_obj_set_style_text_font(label_next, &awsome_14, 0);
@@ -161,4 +160,40 @@ void UiMusicPlayer::setArtist(const char *artist)
     lv_label_set_text(_artist, artist);
     LvglManager::lvgl_unlock();
 
+}
+
+void UiMusicPlayer::setPlaying(bool playing)
+{
+    if(LvglManager::lvgl_lock(_lock_timeout_ms) == false) {
+        ESP_LOGE(_MP_TAG, "Failed to acquire LVGL lock to set playing state");
+        return;
+    }
+
+    if(playing) {
+        lv_label_set_text(_play_label, LV_SYMBOL_PAUSE);
+    } else {
+        lv_label_set_text(_play_label, LV_SYMBOL_PLAY);
+    }
+
+
+    LvglManager::lvgl_unlock();
+}
+
+void UiMusicPlayer::setCoverArt(const uint8_t *p_data)
+{
+    if(LvglManager::lvgl_lock(_lock_timeout_ms) == false) {
+        ESP_LOGE(_MP_TAG, "Failed to acquire LVGL lock to set cover art");
+        return;
+    }
+    _cover_img_dsc.header.magic  = LV_IMAGE_HEADER_MAGIC;
+    _cover_img_dsc.header.cf = LV_COLOR_FORMAT_RGB565_SWAPPED;
+    _cover_img_dsc.header.w = 200;
+    _cover_img_dsc.header.h = 200;
+    _cover_img_dsc.data_size = 200 * 200 * sizeof(uint16_t);
+    _cover_img_dsc.data = p_data;
+        
+
+    lv_image_set_src(_album_art, &_cover_img_dsc);
+    lv_obj_invalidate(_album_art);
+    LvglManager::lvgl_unlock();
 }
