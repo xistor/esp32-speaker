@@ -41,6 +41,13 @@ void UiMusicPlayer::create_ui()
     lv_obj_set_style_pad_all(_album_art, 0, 0);
     lv_obj_align(_album_art, LV_ALIGN_TOP_MID, 0, 20);
     lv_obj_clear_flag(_album_art, LV_OBJ_FLAG_SCROLLABLE);
+    lv_image_set_src(_album_art, LV_SYMBOL_AUDIO);
+    uint32_t scale_factor = (130 * 256) / 200; // Result is 166 (approx 65%)
+
+    lv_image_set_scale(_album_art, scale_factor);
+
+    // 4. (Optional) Set the pivot point to the center so it scales inward perfectly
+    lv_image_set_pivot(_album_art, 100, 100); // Center of the original 200x200 image
 
     // 3. Song Title - Positioned BELOW Album Art
     _title = lv_label_create(main_cont);
@@ -64,11 +71,11 @@ void UiMusicPlayer::create_ui()
     lv_obj_align_to(_artist, _title, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
 
     // 5. Progress Slider
-    lv_obj_t * slider = lv_slider_create(main_cont);
-    lv_obj_set_width(slider, 200);
-    lv_obj_set_height(slider, 6);
-    lv_obj_align(slider, LV_ALIGN_BOTTOM_MID, 0, -80);
-    lv_obj_set_style_bg_color(slider, lv_color_hex(0x1DB954), LV_PART_INDICATOR);
+    _play_slider = lv_slider_create(main_cont);
+    lv_obj_set_width(_play_slider, 200);
+    lv_obj_set_height(_play_slider, 6);
+    lv_obj_align(_play_slider, LV_ALIGN_BOTTOM_MID, 0, -80);
+    lv_obj_set_style_bg_color(_play_slider, lv_color_hex(0x1DB954), LV_PART_INDICATOR);
 
     // 6. contrl button
     lv_obj_t * btn_play = lv_btn_create(main_cont);
@@ -77,7 +84,7 @@ void UiMusicPlayer::create_ui()
     lv_obj_set_style_bg_color(btn_play, lv_color_hex(0xFFFFFF), 0);
     lv_obj_align(btn_play, LV_ALIGN_BOTTOM_MID, 0, -20);
 
-    lv_obj_t * _play_label = lv_label_create(btn_play);
+    _play_label = lv_label_create(btn_play);
     lv_label_set_text(_play_label, LV_SYMBOL_PLAY);
     lv_obj_set_style_text_color(_play_label, lv_color_hex(0x000000), 0);
     lv_obj_center(_play_label);
@@ -195,5 +202,29 @@ void UiMusicPlayer::setCoverArt(const uint8_t *p_data)
 
     lv_image_set_src(_album_art, &_cover_img_dsc);
     lv_obj_invalidate(_album_art);
+    LvglManager::lvgl_unlock();
+}
+
+void UiMusicPlayer::setPlayTime(uint32_t play_time_ms)
+{
+    if(LvglManager::lvgl_lock(_lock_timeout_ms) == false) {
+        ESP_LOGE(_MP_TAG, "Failed to acquire LVGL lock to set cover art");
+        return;
+    }
+    _song_play_time_ms = play_time_ms;
+
+    lv_slider_set_range(_play_slider, 0, (int32_t)_song_play_time_ms);
+    LvglManager::lvgl_unlock();
+}
+
+void UiMusicPlayer::setPlayPosition(uint32_t play_pos_ms)
+{
+    if(LvglManager::lvgl_lock(_lock_timeout_ms) == false) {
+        ESP_LOGE(_MP_TAG, "Failed to acquire LVGL lock to set play position");
+        return;
+    }
+
+    _cur_play_pos_ms = play_pos_ms;
+    lv_slider_set_value(_play_slider, (int32_t)_cur_play_pos_ms, LV_ANIM_OFF);
     LvglManager::lvgl_unlock();
 }

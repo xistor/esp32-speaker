@@ -65,6 +65,7 @@ private:
     static void rcTgCallback(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param);
     static void avrcCommonnCopyMetaData(void *p_dest, void *p_src, int len);
     static void avrcCommonFreeMetaData(void *ptr);
+    static uint8_t allocTransactionLabel();
 
     void handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param);
     void handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);

@@ -230,11 +230,6 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
         break;
     case ESP_A2D_AUDIO_STATE_EVT:
         ESP_LOGI(_XSPK_TAG, "A2DP audio state changed: %d", param->audio_stat.state);
-        // if( param->audio_stat.state == ESP_A2D_AUDIO_STATE_STARTED) {
-        //     _ui_music_player.setPlaying(true);
-        // } else {
-        //     _ui_music_player.setPlaying(false);
-        // }
         break;
     case ESP_A2D_AUDIO_CFG_EVT:
         ESP_LOGI(_XSPK_TAG, "A2DP audio config changed: codec type %d", param->audio_cfg.mcc.type);
@@ -377,9 +372,12 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
         case ESP_AVRC_CT_CONNECTION_STATE_EVT: {
             if (param->conn_stat.connected) {
                 ESP_LOGI(_XSPK_TAG, "AVRCP connected...");
-                esp_avrc_ct_send_metadata_cmd(1, ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_ALBUM);
-                esp_avrc_ct_send_register_notification_cmd(2, ESP_AVRC_RN_TRACK_CHANGE, 0);
-                esp_avrc_ct_send_get_rn_capabilities_cmd(0);
+                esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_ALBUM);
+                esp_avrc_ct_send_register_notification_cmd(allocTransactionLabel(), ESP_AVRC_RN_TRACK_CHANGE, 0);
+                esp_avrc_ct_send_register_notification_cmd(allocTransactionLabel(), ESP_AVRC_RN_PLAY_STATUS_CHANGE, 0);
+                esp_avrc_ct_send_register_notification_cmd(allocTransactionLabel(), ESP_AVRC_RN_PLAY_POS_CHANGED, 3);
+
+                esp_avrc_ct_send_get_rn_capabilities_cmd(allocTransactionLabel());
             }
             break;
         }
@@ -394,6 +392,12 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
             } else if (param->meta_rsp.attr_id == ESP_AVRC_MD_ATTR_ARTIST) {
                 ESP_LOGI(_XSPK_TAG, "Artist: %s", text);
                 _ui_music_player.setArtist(text);
+            } else if (param->meta_rsp.attr_id == ESP_AVRC_MD_ATTR_PLAYING_TIME) {
+                char *playtime_str = (char *)param->meta_rsp.attr_text;
+                uint32_t playtime_ms = atoi(playtime_str);
+
+                _ui_music_player.setPlayTime(playtime_ms);
+
             } else if (param->meta_rsp.attr_id == ESP_AVRC_MD_ATTR_COVER_ART) {
 
                 if(memcmp(_cover_image_handler, param->meta_rsp.attr_text, 7) != 0) {
@@ -416,17 +420,37 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
             break;
         }
         case ESP_AVRC_CT_CHANGE_NOTIFY_EVT: {
-            if (param->change_ntf.event_id == ESP_AVRC_RN_TRACK_CHANGE) {
-                esp_avrc_ct_send_metadata_cmd(1, ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST);
-                esp_avrc_ct_send_register_notification_cmd(2, ESP_AVRC_RN_TRACK_CHANGE, 0);
-                esp_avrc_ct_send_metadata_cmd(3, ESP_AVRC_MD_ATTR_COVER_ART);
+            switch(param->change_ntf.event_id) {
+                case ESP_AVRC_RN_TRACK_CHANGE:
+                    esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_PLAYING_TIME);
+                    esp_avrc_ct_send_register_notification_cmd(allocTransactionLabel(), ESP_AVRC_RN_TRACK_CHANGE, 0);
+                    esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_COVER_ART);
+                    break;
+                case ESP_AVRC_RN_PLAY_STATUS_CHANGE:
+                    ESP_LOGI(_XSPK_TAG, "Playback status changed: 0x%x", param->change_ntf.event_parameter.playback);
+                    if( param->change_ntf.event_parameter.playback == ESP_AVRC_PLAYBACK_PLAYING) {
+                        _ui_music_player.setPlaying(true);
+                    } else {
+                        _ui_music_player.setPlaying(false);
+                    }
+                    esp_avrc_ct_send_register_notification_cmd(allocTransactionLabel(), ESP_AVRC_RN_PLAY_STATUS_CHANGE, 0);
+                    break;
+                case ESP_AVRC_RN_PLAY_POS_CHANGED:
+                    ESP_LOGI(_XSPK_TAG, "Play position changed: %"PRIu32"ms", param->change_ntf.event_parameter.play_pos);
+                    _ui_music_player.setPlayPosition(param->change_ntf.event_parameter.play_pos);
+                    esp_avrc_ct_send_register_notification_cmd(allocTransactionLabel(), ESP_AVRC_RN_PLAY_POS_CHANGED, 3);
 
+                    break;
+                default:
+                    ESP_LOGI(_XSPK_TAG, "Other notification received, event_id: %d", param->change_ntf.event_id);
+                    break;
             }
+
             break;
         }
         case ESP_AVRC_CT_GET_RN_CAPABILITIES_RSP_EVT: {
             /* request the cover art */
-            esp_avrc_ct_send_metadata_cmd(1, ESP_AVRC_MD_ATTR_COVER_ART);
+            esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_COVER_ART);
             break;
         }
         case ESP_AVRC_CT_REMOTE_FEATURES_EVT: {
@@ -442,7 +466,7 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
             if (param->cover_art_state.state == ESP_AVRC_COVER_ART_CONNECTED) {
                 ESP_LOGW(_XSPK_TAG, "Cover Art Client connected");
                 /* request the cover art */
-                esp_avrc_ct_send_metadata_cmd(1, ESP_AVRC_MD_ATTR_COVER_ART);
+                esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_COVER_ART);
             } else {
                 ESP_LOGW(_XSPK_TAG, "Cover Art Client disconnected, reason:%d", param->cover_art_state.reason);
             }
@@ -572,7 +596,7 @@ void SpeakerApp::avrcCommonnCopyMetaData(void *p_dest, void *p_src, int len)
     p_dest_rc->meta_rsp.attr_id = p_src_rc->meta_rsp.attr_id;
     p_dest_rc->meta_rsp.attr_length = p_src_rc->meta_rsp.attr_length;
 
-    ESP_LOGI("SPEAKER_APP", "avrcCommonnCopyMetaData: Copying metadata attr_id=%d, attr_length=%d", p_src_rc->meta_rsp.attr_id, p_src_rc->meta_rsp.attr_length);
+    // ESP_LOGI("SPEAKER_APP", "avrcCommonnCopyMetaData: Copying metadata attr_id=%d, attr_length=%d", p_src_rc->meta_rsp.attr_id, p_src_rc->meta_rsp.attr_length);
     uint8_t *p_attr_text = (uint8_t *) malloc(p_dest_rc->meta_rsp.attr_length + 1);
     if (p_attr_text == nullptr) {
         ESP_LOGE("SPEAKER_APP", "avrcCommonnCopyMetaData: Failed to allocate memory for attr_text!");
@@ -602,11 +626,9 @@ void SpeakerApp::saveCoverImageData(const uint8_t *data, uint32_t data_len)
 {
    _cover_image_size += data_len;
 
-    ESP_LOGI(_XSPK_TAG, "Received cover art data: %d, Total size: %d", data_len, _cover_image_size);
-    // size_t free_heap = esp_get_free_heap_size();
-    // ESP_LOGI(_XSPK_TAG, "Current free heap size: %d bytes", free_heap);
+    ESP_LOGI(_XSPK_TAG, "Received cover art data: %d", data_len);
+
     uint8_t *p_buf = (uint8_t *)realloc(_cover_image_data, _cover_image_size * sizeof(uint8_t));
-    // uint8_t *p_buf = (uint8_t *)heap_caps_realloc(image_data, image_size * sizeof(uint8_t), MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
     if (!p_buf) {
         ESP_LOGE(_XSPK_TAG, "%s: The memory allocation of Cover art image data failed", __func__);
         if (_cover_image_data) {
@@ -617,4 +639,14 @@ void SpeakerApp::saveCoverImageData(const uint8_t *data, uint32_t data_len)
     }
     _cover_image_data = p_buf;
     memcpy(_cover_image_data + _cover_image_size - data_len, data, data_len);
+}
+
+uint8_t SpeakerApp::allocTransactionLabel()
+{
+    static uint8_t tl = 0;
+    if (tl > ESP_AVRC_TRANS_LABEL_MAX) {
+        tl = 0;
+    }
+
+    return tl++;
 }
