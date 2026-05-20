@@ -73,6 +73,10 @@ private:
     void handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param);
     void handleRcTgEvent(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param);
 
+    // play control
+    void playControlCb(UiMusicPlayer::play_ctrl_param_t ctrl_param);
+    void handlePlayControl(uint16_t event, UiMusicPlayer::play_ctrl_param_t *param);
+
     // internal helpers
     void setScanModeConnectable(bool conn, bool discoverable);
 

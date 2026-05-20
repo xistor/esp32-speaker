@@ -29,7 +29,7 @@ void TouchMgr::init() {
     esp_lcd_touch_config_t tp_cfg = {
         .x_max = CONFIG_LCD_H_RES,
         .y_max = CONFIG_LCD_V_RES,
-        .rst_gpio_num = (gpio_num_t)CONFIG_TOUCH_GPIO_RESET, // Shared with LCD reset
+        .rst_gpio_num = (gpio_num_t)CONFIG_TOUCH_GPIO_RESET,
         .int_gpio_num = (gpio_num_t)CONFIG_TOUCH_GPIO_INT,
         .levels = {
             .reset = 0,
@@ -72,7 +72,7 @@ void TouchMgr::init() {
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, TouchMgr::touchReadCallback);
     lv_indev_set_user_data(indev, _touch_handle);
-    lv_timer_set_period(lv_indev_get_read_timer(indev), 50);
+    lv_timer_set_period(lv_indev_get_read_timer(indev), 100);
 
     ESP_LOGI(_TAG_TOUCH, "TouchMgr initialized");
 }

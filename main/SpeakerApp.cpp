@@ -109,8 +109,9 @@ esp_err_t SpeakerApp::init()
 
     _ui_music_player.create_ui();
 
+    _ui_music_player.regPlayCtrlCallback(std::bind(&SpeakerApp::playControlCb, this, std::placeholders::_1));
+
     ESP_LOGI(_XSPK_TAG, "UI created successfully");
-    ESP_LOGI(_XSPK_TAG, "Initialization complete!");
     return ESP_OK;
 }
 
@@ -530,7 +531,6 @@ void SpeakerApp::handleRcTgEvent(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_pa
 bool SpeakerApp::msgDispatch(BtAppCallback callback, uint16_t event, void *p_params, int param_len, BtAppCopyCallback copy_callback, DeepFreeCallback free_callback)
 {
     if (s_instance) {
-        // s_instance->handleA2dpEvent(event, param);
         bt_app_msg_t msg;
         memset(&msg, 0, sizeof(msg));
 
@@ -649,4 +649,37 @@ uint8_t SpeakerApp::allocTransactionLabel()
     }
 
     return tl++;
+}
+
+void SpeakerApp::playControlCb(UiMusicPlayer::play_ctrl_param_t ctrl_param)
+{
+    // ESP_LOGI(_XSPK_TAG, "Prev/Next control callback, ctrl cmd: %d\n", ctrl_param.cmd );
+
+    if (s_instance){
+        s_instance->msgDispatch([ctrl_param](uint16_t evt, void *p) {
+            s_instance->handlePlayControl(evt, (UiMusicPlayer::play_ctrl_param_t *)p);
+        }, 0, &ctrl_param, sizeof(UiMusicPlayer::play_ctrl_param_t));
+    }
+
+}
+
+void SpeakerApp::handlePlayControl(uint16_t evt, UiMusicPlayer::play_ctrl_param_t *ctrl_param)
+{
+    if(ctrl_param->cmd == UiMusicPlayer::playControlCmd::PLAY) {
+        ESP_LOGI(_XSPK_TAG, "Play command received");
+        esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_PLAY, ESP_AVRC_PT_CMD_STATE_PRESSED);
+        esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_PLAY, ESP_AVRC_PT_CMD_STATE_RELEASED);
+    } else if(ctrl_param->cmd == UiMusicPlayer::playControlCmd::PAUSE) {
+        ESP_LOGI(_XSPK_TAG, "Pause command received");
+        esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_PAUSE, ESP_AVRC_PT_CMD_STATE_PRESSED);
+        esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_PAUSE, ESP_AVRC_PT_CMD_STATE_RELEASED);
+    } else if (ctrl_param->cmd == UiMusicPlayer::playControlCmd::PREVIOUS) {
+        ESP_LOGI(_XSPK_TAG, "Previous command received");
+        esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_BACKWARD, ESP_AVRC_PT_CMD_STATE_PRESSED);
+        esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_BACKWARD, ESP_AVRC_PT_CMD_STATE_RELEASED);
+    } else if (ctrl_param->cmd == UiMusicPlayer::playControlCmd::NEXT) {
+        ESP_LOGI(_XSPK_TAG, "Next command received");
+        esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_FORWARD, ESP_AVRC_PT_CMD_STATE_PRESSED);
+        esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_FORWARD, ESP_AVRC_PT_CMD_STATE_RELEASED); 
+    }
 }

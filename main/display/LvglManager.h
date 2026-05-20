@@ -49,7 +49,6 @@ private:
 
     TouchMgr  touchMgr;
     LCDMgr lcdMgr;
-    UiMusicPlayer uiMusicPlayer;
 
 };
 

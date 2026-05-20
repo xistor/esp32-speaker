@@ -88,7 +88,7 @@ void UiMusicPlayer::create_ui()
     lv_label_set_text(_play_label, LV_SYMBOL_PLAY);
     lv_obj_set_style_text_color(_play_label, lv_color_hex(0x000000), 0);
     lv_obj_center(_play_label);
-    lv_obj_add_event_cb(btn_play, play_pause_event_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(btn_play, play_ctrl_event_cb, LV_EVENT_CLICKED, (void *)1);
 
     // --- prev ---
     lv_obj_t * btn_prev = lv_btn_create(main_cont);
@@ -104,6 +104,7 @@ void UiMusicPlayer::create_ui()
     lv_obj_set_style_text_font(label_prev, &awsome_14, 0);
     lv_obj_set_style_text_color(label_prev, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(label_prev);
+    lv_obj_add_event_cb(btn_prev, play_ctrl_event_cb, LV_EVENT_CLICKED, (void *)2);
 
     // --- next ---
     lv_obj_t * btn_next = lv_btn_create(main_cont);
@@ -119,31 +120,9 @@ void UiMusicPlayer::create_ui()
     lv_obj_set_style_text_font(label_next, &awsome_14, 0);
     lv_obj_set_style_text_color(label_next, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(label_next);
+    lv_obj_add_event_cb(btn_next, play_ctrl_event_cb, LV_EVENT_CLICKED, (void *)3);
 
     LvglManager::lvgl_unlock();
-}
-
-void UiMusicPlayer::play_pause_event_cb(lv_event_t * e)
-{
-    if(s_instance) {
-        s_instance->handlePlayPauseEvent(e);
-    }
-}
-
-void UiMusicPlayer::handlePlayPauseEvent(lv_event_t * e)
-{
-    lv_obj_t * btn = (lv_obj_t *)lv_event_get_target(e);
-    lv_obj_t * label = lv_obj_get_child(btn, 0);
-
-    ESP_LOGI(_MP_TAG, "Play/Pause Button Clicked!");
-    // Toggle between Play and Pause icons
-    const char * txt = lv_label_get_text(label);
-    if(strcmp(txt, LV_SYMBOL_PLAY) == 0) {
-        lv_label_set_text(label, LV_SYMBOL_PAUSE);
-    } else {
-        lv_label_set_text(label, LV_SYMBOL_PLAY);
-    }
-
 }
 
 void UiMusicPlayer::setTitle(const char *title)
@@ -181,7 +160,6 @@ void UiMusicPlayer::setPlaying(bool playing)
     } else {
         lv_label_set_text(_play_label, LV_SYMBOL_PLAY);
     }
-
 
     LvglManager::lvgl_unlock();
 }
@@ -227,4 +205,55 @@ void UiMusicPlayer::setPlayPosition(uint32_t play_pos_ms)
     _cur_play_pos_ms = play_pos_ms;
     lv_slider_set_value(_play_slider, (int32_t)_cur_play_pos_ms, LV_ANIM_OFF);
     LvglManager::lvgl_unlock();
+}
+
+void UiMusicPlayer::regPlayCtrlCallback(PlayCtrlCallback cb)
+{
+    _play_ctrl_cb = cb;
+    ESP_LOGI(_MP_TAG, "Registering Play Control Callback %x", (uintptr_t)cb.target<void(*)(uint16_t)>());
+
+}
+
+void UiMusicPlayer::play_ctrl_event_cb(lv_event_t * e)
+{
+    play_ctrl_param_t ctrl_param;
+
+    int id = (int)lv_event_get_user_data(e);
+    if (id == 1) {
+            // ESP_LOGI(_MP_TAG, "play/pause Button Clicked!");
+        lv_obj_t * btn = (lv_obj_t *)lv_event_get_target(e);
+        lv_obj_t * label = lv_obj_get_child(btn, 0);
+
+        // Toggle between Play and Pause icons
+        const char * txt = lv_label_get_text(label);
+        if(strcmp(txt, LV_SYMBOL_PAUSE) == 0) {
+            lv_label_set_text(label, LV_SYMBOL_PLAY);
+            if(s_instance) {
+                ctrl_param.cmd = playControlCmd::PAUSE;
+                s_instance->_play_ctrl_cb(ctrl_param);
+            }
+
+        } else {
+            lv_label_set_text(label, LV_SYMBOL_PAUSE);
+             if(s_instance) {
+                ctrl_param.cmd = playControlCmd::PLAY;
+                s_instance->_play_ctrl_cb(ctrl_param);
+            }
+        }
+
+    } else if (id == 2) {
+        // ESP_LOGI(_MP_TAG, "prev Button Clicked!");
+        if(s_instance) {
+            ctrl_param.cmd = playControlCmd::PREVIOUS;
+            s_instance->_play_ctrl_cb(ctrl_param);
+        }
+    } else if (id == 3) {
+        // ESP_LOGI(_MP_TAG, "next Button Clicked!");
+        if(s_instance) {
+            ctrl_param.cmd = playControlCmd::NEXT;
+            s_instance->_play_ctrl_cb(ctrl_param);
+        }
+    } else {
+        ESP_LOGW(_MP_TAG, "Unknown Button Clicked with id: %d", id);
+    }
 }
