@@ -1,6 +1,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "LCDMgr.h"
+#include <driver/gpio.h>
 
 LCDMgr::LCDMgr() {
 }
@@ -58,7 +59,7 @@ void LCDMgr::init(uint16_t width, uint16_t height) {
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(_panel_handle, true));
 
     // this flips the display vertically
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(_panel_handle, true, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(_panel_handle, false, false));
 
     // create a lvgl display
     _disp = lv_display_create(_lcd_width, _lcd_height);
@@ -101,6 +102,11 @@ void LCDMgr::init(uint16_t width, uint16_t height) {
 
     /* Register done callback */
     ESP_ERROR_CHECK(esp_lcd_panel_io_register_event_callbacks(_io_handle, &cbs, _disp));
+
+    // turn on the backlight
+    gpio_reset_pin((gpio_num_t)CONFIG_LCD_BACKLIGHT_GPIO);
+    gpio_set_direction((gpio_num_t)CONFIG_LCD_BACKLIGHT_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)CONFIG_LCD_BACKLIGHT_GPIO, 1);
 }
 
 void LCDMgr::deinit() {
@@ -145,4 +151,8 @@ bool LCDMgr::notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io,
     lv_display_t *disp = (lv_display_t *)user_ctx;
     lv_display_flush_ready(disp);
     return false;
+}
+
+void LCDMgr::setLCDBackLight(bool on) {
+    gpio_set_level((gpio_num_t)CONFIG_LCD_BACKLIGHT_GPIO, on ? 1 : 0);
 }

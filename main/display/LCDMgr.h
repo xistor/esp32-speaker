@@ -20,6 +20,7 @@ public:
     ~LCDMgr();
     void init(uint16_t width, uint16_t height);
     void deinit();
+    void setLCDBackLight(bool on);
 
 private:
     static constexpr const char *_LCDMGR_TAG = "LCDMgr";

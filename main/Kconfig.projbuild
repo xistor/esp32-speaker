@@ -9,9 +9,15 @@ menu "X Speaker Configuration"
 # "I2S pin configuration"
     config I2S_BCK_PIN
         int "I2S BCK pin GPIO Number"
-        default 26
+        default 25
         help
             Use this option to set I2S BCK pin number.
+
+    config I2S_DATA_PIN
+        int "I2S DATA pin GPIO Number"
+        default 26
+        help
+            Use this option to set I2S DATA pin number.
 
     config I2S_LRCK_PIN
         int "I2S LRCK pin GPIO Number"
@@ -19,11 +25,7 @@ menu "X Speaker Configuration"
         help
             Use this option to set I2S LRCK pin number.
 
-    config I2S_DATA_PIN
-        int "I2S DATA pin GPIO Number"
-        default 25
-        help
-            Use this option to set I2S DATA pin number.
+
 
 
 # "LCD configuration"
@@ -57,33 +59,39 @@ menu "X Speaker Configuration"
         help
             LCD color depth.
 
+    config LCD_BACKLIGHT_GPIO
+        int "LCD Backlight GPIO"
+        default 23
+        help
+            LCD backlight control pin GPIO number.
+
     config LCD_CS
         int "LCD Chip Select GPIO"
-        default 5
+        default 21
         help
             LCD chip select pin GPIO number.
 
     config LCD_DC
         int "LCD Data/Command GPIO"
-        default 2
+        default 22
         help
             LCD data/command pin GPIO number.
 
     config LCD_RST
         int "LCD Reset GPIO"
-        default 15
+        default 5
         help
             LCD reset pin GPIO number.
 
     config LCD_MOSI
         int "LCD MOSI GPIO"
-        default 4
+        default 18
         help
             LCD MOSI pin.
 
     config LCD_CLK
         int "LCD CLK GPIO"
-        default 0
+        default 19
         help
             LCD clock pin.
 
@@ -91,24 +99,24 @@ menu "X Speaker Configuration"
 # "Touch panel configuration"
     config TOUCH_I2C_SCL
         int "Touch I2C SCL GPIO"
-        default 23
+        default 4
         help
             Touch panel I2C SCL pin GPIO number.
 
     config TOUCH_I2C_SDA
         int "Touch I2C SDA GPIO"
-        default 18
+        default 2
         help
             Touch panel I2C SDA pin GPIO number.
 
     config TOUCH_GPIO_INT
         int "Touch GPIO INT"
-        default 22
+        default 33
         help
             Touch panel interrupt pin.
     config TOUCH_GPIO_RESET
         int "Touch GPIO RESET"
-        default 19
+        default 32
         help
             Touch panel reset pin.
     config TOUCH_I2C_NUM

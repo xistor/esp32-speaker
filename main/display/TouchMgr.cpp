@@ -22,7 +22,7 @@ void TouchMgr::init() {
         .scl_io_num = (gpio_num_t)CONFIG_TOUCH_I2C_SCL,
         .clk_source = I2C_CLK_SRC_DEFAULT,
     };
-
+    i2c_config.flags.enable_internal_pullup = 1;
     i2c_new_master_bus(&i2c_config, &_i2c_handle);
 
     /* Initialize touch HW */
@@ -64,15 +64,20 @@ void TouchMgr::init() {
     tp_io_config.scl_speed_hz = CONFIG_TOUCH_I2C_CLK_HZ;
 
     esp_lcd_new_panel_io_i2c(_i2c_handle, &tp_io_config, &tp_io_handle);
-    esp_lcd_touch_new_i2c_cst816s(tp_io_handle, &tp_cfg, &_touch_handle);
+    esp_err_t err = esp_lcd_touch_new_i2c_cst816s(tp_io_handle, &tp_cfg, &_touch_handle);
 
-    esp_lcd_touch_set_mirror_y(_touch_handle, true); // 上下反转
+    if (err == ESP_OK && tp_io_handle != NULL) {
+        // esp_lcd_touch_set_mirror_x(_touch_handle, true); // 左右反转
+    } else {
+        ESP_LOGE(_TAG_TOUCH, "Touch screen hardware skipped or not detected.");
+    }
+
 
     lv_indev_t * indev = lv_indev_create();
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, TouchMgr::touchReadCallback);
     lv_indev_set_user_data(indev, _touch_handle);
-    lv_timer_set_period(lv_indev_get_read_timer(indev), 100);
+    lv_timer_set_period(lv_indev_get_read_timer(indev), 50);
 
     ESP_LOGI(_TAG_TOUCH, "TouchMgr initialized");
 }
@@ -140,7 +145,7 @@ void TouchMgr::handleTouchRead(lv_indev_data_t * data) {
     bool touchpad_pressed = esp_lcd_touch_get_coordinates(_touch_handle, touchpad_x, touchpad_y, NULL, &touchpad_cnt, 1);
 
     if (touchpad_pressed && touchpad_cnt > 0) {
-        data->point.x = touchpad_x[0];
+        data->point.x = CONFIG_LCD_H_RES - 1 - touchpad_x[0];
         data->point.y = touchpad_y[0];
         data->state = LV_INDEV_STATE_PRESSED;
     } else {

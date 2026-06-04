@@ -26,6 +26,10 @@ public:
 
     bool isInitialized() const { return _initialized; }
 
+    void setBackLight(bool on) {
+        lcdMgr.setLCDBackLight(on);
+    }
+
 private:
     static LvglManager *s_instance;
     static constexpr const char *_LVMGR_TAG = "LvglManager";
