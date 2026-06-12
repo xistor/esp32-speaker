@@ -355,6 +355,7 @@ void SpeakerApp::handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param
 void SpeakerApp::handleA2dpData(const uint8_t *data, uint32_t len)
 {
     _audio_i2s.sendToI2s(data, len);
+    _ui_music_player.audioVisual(data, len);
 
     static uint32_t s_pkt_cnt = 0;
     if (++s_pkt_cnt % 100 == 0) {

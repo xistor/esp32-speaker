@@ -2,3 +2,4 @@ dependencies:
   lvgl/lvgl: "^9.5.0"
   espressif/esp_lcd_touch_cst816s: "^1.1.1~1"
   espressif/esp_jpeg: "^1.0.5"
+  espressif/esp-dsp: "^1.2.0"

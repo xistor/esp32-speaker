@@ -1,4 +1,14 @@
 dependencies:
+  espressif/esp-dsp:
+    component_hash: ed9ac175b14e0414399a2b33c525579414b5bad19a2a67b12ea212def96f9a98
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.8.2
   espressif/esp_jpeg:
     component_hash: defb83669293cbf86d0fa86b475ba5517aceed04ed70db435388c151ab37b5d7
     dependencies:
@@ -45,9 +55,10 @@ dependencies:
       type: service
     version: 9.5.0
 direct_dependencies:
+- espressif/esp-dsp
 - espressif/esp_jpeg
 - espressif/esp_lcd_touch_cst816s
 - lvgl/lvgl
-manifest_hash: b79359f3cca8c7ec25bde8ec8c57f4151c8789a4e3b98641c90108533a02c3f2
+manifest_hash: b3629c771a9cf382f3debb0bff8ff6cdcb9442a26dd2c4c0ec4ce81fa2d43e45
 target: esp32
 version: 2.0.0

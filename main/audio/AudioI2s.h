@@ -13,6 +13,7 @@
 #define X_AUDIO_I2S_TAG       "AUDIO_I2S"
 
 static constexpr size_t RINGBUF_PREFETCH_WATER_LEVEL = 20 * 1024;
+static constexpr size_t RINGBUF_HIGHEST_WATER_LEVEL = 32 * 1024;
 
 enum class RingbufferMode {
     PROCESSING,    /* ringbuffer is buffering incoming audio data, I2S is working */
@@ -42,7 +43,7 @@ private:
 
     RingbufHandle_t _ringbuf_i2s = nullptr;     /* handle of ringbuffer for I2S */
     std::atomic<RingbufferMode> _ringbuffer_mode{RingbufferMode::PREFETCHING};
-    size_t _ringbuf_size = 64 * 1024;
+    size_t _ringbuf_size = RINGBUF_HIGHEST_WATER_LEVEL;
 
     /* private func */
     void i2sTask();

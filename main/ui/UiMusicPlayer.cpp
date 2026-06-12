@@ -2,6 +2,9 @@
 #include "esp_log.h"
 #include "UiMusicPlayer.h"
 #include "LvglManager.h"
+#include <cmath>
+#include "esp_dsp.h"
+#include "esp_pthread.h"
 
 extern "C" {
     LV_FONT_DECLARE(Noto_14);
@@ -9,10 +12,55 @@ extern "C" {
 }
 
 UiMusicPlayer *UiMusicPlayer::s_instance = nullptr;
+float UiMusicPlayer::s_current_fft_bands[CONFIG_UI_SPECTRUM_BANDS_NUMS];
+float UiMusicPlayer::s_smoothed_heights[CONFIG_UI_SPECTRUM_BANDS_NUMS];
 
 UiMusicPlayer::UiMusicPlayer()
 {
     s_instance = this;
+
+    _ringbuf_fft = xRingbufferCreate(_fft_buf_size, RINGBUF_TYPE_BYTEBUF);
+    if (_ringbuf_fft == nullptr) {
+        ESP_LOGE(_MP_TAG, "Failed to create ring buffer for FFT data");
+        return;
+    }
+
+    _fft_write_semaphore = xSemaphoreCreateBinary();
+
+     if (_fft_write_semaphore == nullptr) {
+        ESP_LOGE(_MP_TAG, "%s, semaphore create failed", __func__);
+        return;
+    }
+}
+
+UiMusicPlayer::~UiMusicPlayer()
+{
+
+    _fft_running.store(false);
+    xSemaphoreGive(_fft_write_semaphore);
+
+    if (_fft_process_thread.joinable()) {
+        _fft_process_thread.join();
+    }
+
+    if(_ringbuf_fft) {
+        vRingbufferDelete(_ringbuf_fft);
+        _ringbuf_fft = nullptr;
+    }
+}
+
+void UiMusicPlayer::sp_timer_cb(lv_timer_t * timer) {
+
+    int max_height = 120;
+
+    for(int i = 0; i < CONFIG_UI_SPECTRUM_BANDS_NUMS; i++) {
+            float energy = sqrtf(s_current_fft_bands[i]);
+            if (energy > 1.0f) energy = 1.0f;
+
+            float target_height = energy * max_height;
+
+            lv_obj_set_height(s_instance->_band_objs[i], (int32_t)target_height);
+    }
 
 }
 
@@ -26,7 +74,7 @@ void UiMusicPlayer::create_ui()
 
     // 1. Background Container
     lv_obj_t * main_cont = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(main_cont, 240, 320);
+    lv_obj_set_size(main_cont, CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
     lv_obj_set_style_bg_color(main_cont, lv_color_hex(0x000000), 0);
     lv_obj_set_style_border_width(main_cont, 0, 0);
     lv_obj_set_style_radius(main_cont, 0, 0);
@@ -45,9 +93,50 @@ void UiMusicPlayer::create_ui()
     uint32_t scale_factor = (130 * 256) / 200; // Result is 166 (approx 65%)
 
     lv_image_set_scale(_album_art, scale_factor);
-
-    // 4. (Optional) Set the pivot point to the center so it scales inward perfectly
     lv_image_set_pivot(_album_art, 100, 100); // Center of the original 200x200 image
+    
+    lv_obj_add_flag(_album_art, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(_album_art, visual_switch_event_cb, LV_EVENT_CLICKED, NULL);
+
+    // 2.5 Spectrum Visualizer
+    _sp_cont = lv_obj_create(main_cont);
+    int _sp_cont_width = CONFIG_LCD_H_RES - 40;
+    lv_obj_set_size(_sp_cont, _sp_cont_width, 120); 
+    lv_obj_align(_sp_cont, LV_ALIGN_TOP_MID, 0, 20);
+
+    lv_obj_set_style_pad_all(_sp_cont, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(_sp_cont, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(_sp_cont, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(_sp_cont, LV_OPA_COVER, LV_PART_MAIN);
+
+    lv_obj_set_layout(_sp_cont, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(_sp_cont, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(_sp_cont, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+
+    lv_obj_remove_flag(_sp_cont, LV_OBJ_FLAG_SCROLLABLE);
+
+    int bar_width = _sp_cont_width / CONFIG_UI_SPECTRUM_BANDS_NUMS;
+
+    for(int i = 0; i < CONFIG_UI_SPECTRUM_BANDS_NUMS; i++) {
+        _band_objs[i] = lv_obj_create(_sp_cont);
+
+        lv_obj_set_style_pad_all(_band_objs[i], 0, LV_PART_MAIN);
+        lv_obj_set_style_border_width(_band_objs[i], 0, LV_PART_MAIN);
+        
+        lv_obj_set_size(_band_objs[i], bar_width, 4); 
+        
+        lv_obj_set_style_radius(_band_objs[i], 0, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(_band_objs[i], lv_color_hex(0x00A2FF), LV_PART_MAIN); 
+        
+        lv_obj_remove_flag(_band_objs[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(_band_objs[i], LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    lv_obj_add_flag(_sp_cont, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(_sp_cont, visual_switch_event_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_timer_create(sp_timer_cb, 33, NULL);
+    lv_obj_add_flag(_sp_cont, LV_OBJ_FLAG_HIDDEN); 
 
     // 3. Song Title - Positioned BELOW Album Art
     _title = lv_label_create(main_cont);
@@ -57,7 +146,7 @@ void UiMusicPlayer::create_ui()
     lv_label_set_long_mode(_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_style_text_align(_title, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(_title, &awsome_14, 0);
-    lv_obj_align_to(_title, _album_art, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+    lv_obj_align_to(_title, _sp_cont, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 
     // 4. Artist Name - Positioned BELOW Song Title
     _artist = lv_label_create(main_cont);
@@ -123,6 +212,18 @@ void UiMusicPlayer::create_ui()
     lv_obj_add_event_cb(btn_next, play_ctrl_event_cb, LV_EVENT_CLICKED, (void *)3);
 
     LvglManager::lvgl_unlock();
+
+
+    calculateBandWidths();
+    _fft_running.store(true);
+
+    esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
+    cfg.stack_size = 1024 * 16;
+    cfg.thread_name = "fftProcessingTask";
+    esp_pthread_set_cfg(&cfg);
+
+    _fft_process_thread = std::thread(&UiMusicPlayer::fftProcessingTask, this);
+
 }
 
 void UiMusicPlayer::setTitle(const char *title)
@@ -177,9 +278,13 @@ void UiMusicPlayer::setCoverArt(const uint8_t *p_data)
     _cover_img_dsc.data_size = 200 * 200 * sizeof(uint16_t);
     _cover_img_dsc.data = p_data;
         
+    if(_album_art) {
+        lv_image_set_src(_album_art, &_cover_img_dsc);
+        lv_obj_invalidate(_album_art);
+    } else {
+        ESP_LOGW(_MP_TAG, "Album art object not created yet, cannot set cover art");
+    }
 
-    lv_image_set_src(_album_art, &_cover_img_dsc);
-    lv_obj_invalidate(_album_art);
     LvglManager::lvgl_unlock();
 }
 
@@ -255,5 +360,139 @@ void UiMusicPlayer::play_ctrl_event_cb(lv_event_t * e)
         }
     } else {
         ESP_LOGW(_MP_TAG, "Unknown Button Clicked with id: %d", id);
+    }
+}
+
+void UiMusicPlayer::visual_switch_event_cb(lv_event_t * e)
+{
+    ESP_LOGI(_MP_TAG, "Visual switch event triggered");
+    if(s_instance) {
+
+        if (s_instance->_visual_type == visualType::ALBUM_ART) {
+            lv_obj_add_flag(s_instance->_album_art, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(s_instance->_sp_cont, LV_OBJ_FLAG_HIDDEN);
+            s_instance->_visual_type = visualType::SPECTRUM;
+        } else if (s_instance->_visual_type == visualType::SPECTRUM) {
+            lv_obj_clear_flag(s_instance->_album_art, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_instance->_sp_cont, LV_OBJ_FLAG_HIDDEN);
+            s_instance->_visual_type = visualType::ALBUM_ART;
+        }
+    }
+}
+
+void UiMusicPlayer::audioVisual(const uint8_t *data, size_t size)
+{
+    if (_ringbuf_fft == nullptr) {
+        ESP_LOGE(_MP_TAG, "Ring buffer for FFT is not initialized");
+        return;
+    }
+
+    if (xRingbufferSend(_ringbuf_fft, data, size, (TickType_t)0) != pdTRUE) {
+        ESP_LOGW(_MP_TAG, "Failed to send audio data to FFT ring buffer");
+    } else {
+        xSemaphoreGive(_fft_write_semaphore);
+    }
+}
+
+void UiMusicPlayer::fftProcessingTask() {
+
+    esp_err_t ret;
+    const int FFT_SIZE = CONFIG_UI_FFT_SAMPLE_SIZE;
+
+    ret = dsps_fft2r_init_fc32(NULL, CONFIG_DSP_MAX_FFT_SIZE);
+    if (ret  != ESP_OK) {
+        ESP_LOGE(_MP_TAG, "Not possible to initialize FFT. Error = %i", ret);
+        return;
+    }
+
+    // Generate hann window
+    dsps_wind_hann_f32(_fft_window, FFT_SIZE);
+
+    float magnitudes[FFT_SIZE / 2] = {0};
+
+    while (_fft_running.load()) {
+
+        if (pdTRUE == xSemaphoreTake(_fft_write_semaphore, portMAX_DELAY)) {
+
+            while (_fft_running.load()) {
+                size_t item_size = 0;
+                uint8_t *audio_data = static_cast<uint8_t *>(xRingbufferReceiveUpTo
+                    (_ringbuf_fft, &item_size, pdMS_TO_TICKS(100), FFT_SIZE * 4));
+                
+                if (audio_data == nullptr || item_size == 0) {
+                    ESP_LOGI(_MP_TAG, "No audio data received, waiting...");
+                    break;
+                }
+
+                int16_t *pcm16 = (int16_t *)audio_data;
+                for(int i = 0; i < FFT_SIZE; i++) {
+                    int16_t left = pcm16[i * 2];
+                    int16_t right = pcm16[i * 2 + 1];
+
+                    float mono = (left + right) / 2.0f;
+
+                    mono *= _fft_window[i];
+                    _fft_io_buffer[i * 2]     = mono;
+                    _fft_io_buffer[i * 2 + 1] = 0.0f;
+
+                }
+                vRingbufferReturnItem(_ringbuf_fft, audio_data);
+
+                dsps_fft2r_fc32(_fft_io_buffer, FFT_SIZE);
+                dsps_bit_rev_fc32(_fft_io_buffer, FFT_SIZE);
+
+                for (int i = 0; i < FFT_SIZE / 2; i++) {
+                    float real = _fft_io_buffer[i * 2];
+                    float imag = _fft_io_buffer[i * 2 + 1];
+                    magnitudes[i] = sqrtf(real * real + imag * imag);
+                }
+
+
+                int fft_index = 1;
+
+                for (int b = 0; b < CONFIG_UI_SPECTRUM_BANDS_NUMS; b++) {
+                    float sum = 0;
+                    int width = _band_widths[b];
+                    
+                    for (int w = 0; w < width; w++) {
+                        if (fft_index < FFT_SIZE / 2) {
+                            sum += magnitudes[fft_index++];
+                        }
+                    }
+                    float avg_magnitude = sum / width;
+
+                    float dB = 12.0f * log10f(avg_magnitude);
+
+                    float normalized = dB / 120.0f; 
+
+                    if (normalized > 1.0f) normalized = 1.0f;
+                    if (normalized < 0.0f) normalized = 0.0f;
+
+                    s_current_fft_bands[b] = normalized;
+                }
+            }
+        }
+    }
+
+}
+
+void UiMusicPlayer::calculateBandWidths(void) {
+    int last_end_index = 1;  // Skip bin 0 (DC offset)
+    float base = 1.2f;       // Reduced base offset optimized for 64 splits
+    
+    for (int b = 0; b < CONFIG_UI_SPECTRUM_BANDS_NUMS; b++) {
+        // Logarithmic progress curve to partition the 256 bins into 64 slices
+        float progress = (float)(b + 1) / CONFIG_UI_SPECTRUM_BANDS_NUMS;
+        int current_end_index = (int)roundf(base * powf(256.0f / base, progress));
+        
+        // Boundaries safety check
+        if (current_end_index > 256) current_end_index = 256;
+        if (current_end_index <= last_end_index) current_end_index = last_end_index + 1;
+
+        // Calculate the width for the current bar
+        _band_widths[b] = current_end_index - last_end_index;
+        
+        // Update marker
+        last_end_index = current_end_index;
     }
 }

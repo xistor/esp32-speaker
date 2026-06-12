@@ -179,6 +179,20 @@ menu "X Speaker Configuration"
         default 5
         help
             LVGL task priority.
+
+# ui config
+    config UI_SPECTRUM_BANDS_NUMS
+        int "UI Spectrum Bands Number"
+        default 32
+        help
+            Number of spectrum bars in the UI music player.
+
+    config UI_FFT_SAMPLE_SIZE
+        int "UI FFT Sample Size"
+        default 512
+        help
+            Number of samples for FFT processing in the UI music player.
+
 endmenu
 
 
