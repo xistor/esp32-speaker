@@ -43,8 +43,7 @@ public:
 private:
     static UiMusicPlayer *s_instance;
     static constexpr const char *_MP_TAG = "UI_MPLAYER";
-    static float s_current_fft_bands[CONFIG_UI_SPECTRUM_BANDS_NUMS];
-    static float s_smoothed_heights[CONFIG_UI_SPECTRUM_BANDS_NUMS];
+    static int16_t s_current_fft_bands[CONFIG_UI_SPECTRUM_BANDS_NUMS];
 
     static void play_ctrl_event_cb(lv_event_t * e);
     static void visual_switch_event_cb(lv_event_t * e);
@@ -79,7 +78,7 @@ private:
 
     SemaphoreHandle_t _fft_write_semaphore = nullptr;
 
-    visualType _visual_type = visualType::ALBUM_ART;
+    visualType _visual_type = visualType::SPECTRUM;
 
     void handlePlayCtrlEvent(lv_event_t * e);
     void fftProcessingTask();

@@ -12,8 +12,8 @@ extern "C" {
 }
 
 UiMusicPlayer *UiMusicPlayer::s_instance = nullptr;
-float UiMusicPlayer::s_current_fft_bands[CONFIG_UI_SPECTRUM_BANDS_NUMS];
-float UiMusicPlayer::s_smoothed_heights[CONFIG_UI_SPECTRUM_BANDS_NUMS];
+int16_t UiMusicPlayer::s_current_fft_bands[CONFIG_UI_SPECTRUM_BANDS_NUMS];
+
 
 UiMusicPlayer::UiMusicPlayer()
 {
@@ -51,15 +51,8 @@ UiMusicPlayer::~UiMusicPlayer()
 
 void UiMusicPlayer::sp_timer_cb(lv_timer_t * timer) {
 
-    int max_height = 120;
-
     for(int i = 0; i < CONFIG_UI_SPECTRUM_BANDS_NUMS; i++) {
-            float energy = sqrtf(s_current_fft_bands[i]);
-            if (energy > 1.0f) energy = 1.0f;
-
-            float target_height = energy * max_height;
-
-            lv_obj_set_height(s_instance->_band_objs[i], (int32_t)target_height);
+            lv_obj_set_height(s_instance->_band_objs[i], (int32_t)s_current_fft_bands[i]);
     }
 
 }
@@ -417,10 +410,10 @@ void UiMusicPlayer::fftProcessingTask() {
             while (_fft_running.load()) {
                 size_t item_size = 0;
                 uint8_t *audio_data = static_cast<uint8_t *>(xRingbufferReceiveUpTo
-                    (_ringbuf_fft, &item_size, pdMS_TO_TICKS(100), FFT_SIZE * 4));
+                    (_ringbuf_fft, &item_size, pdMS_TO_TICKS(5), FFT_SIZE * 4));
                 
                 if (audio_data == nullptr || item_size == 0) {
-                    ESP_LOGI(_MP_TAG, "No audio data received, waiting...");
+                    // ESP_LOGI(_MP_TAG, "No audio data received, waiting...");
                     break;
                 }
 
@@ -461,14 +454,14 @@ void UiMusicPlayer::fftProcessingTask() {
                     }
                     float avg_magnitude = sum / width;
 
-                    float dB = 12.0f * log10f(avg_magnitude);
+                    float dB = 20.0f * log10f(avg_magnitude + 1e-4f);
 
                     float normalized = dB / 120.0f; 
 
                     if (normalized > 1.0f) normalized = 1.0f;
                     if (normalized < 0.0f) normalized = 0.0f;
 
-                    s_current_fft_bands[b] = normalized;
+                    s_current_fft_bands[b] = normalized * 120;
                 }
             }
         }
@@ -479,12 +472,12 @@ void UiMusicPlayer::fftProcessingTask() {
 void UiMusicPlayer::calculateBandWidths(void) {
     int last_end_index = 1;  // Skip bin 0 (DC offset)
     float base = 1.2f;       // Reduced base offset optimized for 64 splits
-    
+
     for (int b = 0; b < CONFIG_UI_SPECTRUM_BANDS_NUMS; b++) {
         // Logarithmic progress curve to partition the 256 bins into 64 slices
         float progress = (float)(b + 1) / CONFIG_UI_SPECTRUM_BANDS_NUMS;
         int current_end_index = (int)roundf(base * powf(256.0f / base, progress));
-        
+
         // Boundaries safety check
         if (current_end_index > 256) current_end_index = 256;
         if (current_end_index <= last_end_index) current_end_index = last_end_index + 1;
