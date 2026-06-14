@@ -27,7 +27,7 @@ public:
     bool isInitialized() const { return _initialized; }
 
     void setBackLight(bool on) {
-        lcdMgr.setLCDBackLight(on);
+        _lcdMgr.setLCDBackLight(on);
     }
 
 private:
@@ -51,8 +51,8 @@ private:
     esp_timer_handle_t _tick_timer;
     TaskHandle_t _task_handle = nullptr;
 
-    TouchMgr  touchMgr;
-    LCDMgr lcdMgr;
+    TouchMgr  _touchMgr;
+    LCDMgr _lcdMgr;
 
 };
 

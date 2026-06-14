@@ -7,11 +7,11 @@ menu "X Speaker Configuration"
 
 
 # "I2S pin configuration"
-    config I2S_BCK_PIN
-        int "I2S BCK pin GPIO Number"
+    config I2S_LRCK_PIN
+        int "I2S LRCK pin GPIO Number"
         default 25
         help
-            Use this option to set I2S BCK pin number.
+            Use this option to set I2S LRCK pin number.
 
     config I2S_DATA_PIN
         int "I2S DATA pin GPIO Number"
@@ -19,12 +19,11 @@ menu "X Speaker Configuration"
         help
             Use this option to set I2S DATA pin number.
 
-    config I2S_LRCK_PIN
-        int "I2S LRCK pin GPIO Number"
+    config I2S_BCK_PIN
+        int "I2S BCK pin GPIO Number"
         default 27
         help
-            Use this option to set I2S LRCK pin number.
-
+            Use this option to set I2S BCK pin number.
 
 
 

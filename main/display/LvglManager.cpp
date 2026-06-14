@@ -49,8 +49,8 @@ esp_err_t LvglManager::init(uint16_t width, uint16_t height)
 
     lv_init();
 
-    lcdMgr.init(width, height);
-    touchMgr.init();
+    _lcdMgr.init(width, height);
+    _touchMgr.init();
 
     // uiMusicPlayer.create_ui();
 
@@ -98,9 +98,9 @@ esp_err_t LvglManager::deinit()
         return ESP_OK;
     }
 
-    touchMgr.deinit();
+    _touchMgr.deinit();
 
-    lcdMgr.deinit();
+    _lcdMgr.deinit();
 
     _running = false;
 
