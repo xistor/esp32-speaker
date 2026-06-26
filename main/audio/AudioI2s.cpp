@@ -1,4 +1,6 @@
 #include "AudioI2s.h"
+#include "esp_pthread.h"
+#include "freertos/idf_additions.h" 
 
 AudioI2s::AudioI2s(const i2s_chan_config_t &chan_cfg, const i2s_std_config_t &std_cfg)
     : _chan_cfg(chan_cfg), _std_cfg(std_cfg)
@@ -69,6 +71,14 @@ AudioI2sError AudioI2s::start()
 
     _running.store(true);
 
+
+    esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
+    cfg.thread_name = "i2STask";
+    cfg.pin_to_core = 0; 
+    cfg.prio = 15; 
+
+    esp_pthread_set_cfg(&cfg);
+
     _i2s_task_thread = std::thread(&AudioI2s::i2sTask, this);
 
     ESP_LOGI(X_AUDIO_I2S_TAG, "AudioI2s::start success");
@@ -137,7 +147,6 @@ void AudioI2s::i2sTask()
                     _ringbuffer_mode.store(RingbufferMode::PREFETCHING);
                     break;
                 }
-
                 i2s_channel_write(_tx_chan, data, item_size, &bytes_written, portMAX_DELAY);
                 vRingbufferReturnItem(_ringbuf_i2s, data);
             }
@@ -179,4 +188,22 @@ size_t AudioI2s::sendToI2s(const uint8_t *data, size_t size)
     }
 
     return done ? size : 0;
+}
+
+void AudioI2s::clearI2sRingbuffer()
+{
+    i2s_channel_disable(_tx_chan);
+
+    uint8_t *item = nullptr;
+    size_t item_size = 0;
+    if (_ringbuf_i2s) {
+
+        while ((item = static_cast<uint8_t *>(xRingbufferReceive(_ringbuf_i2s, &item_size, 0))) != NULL) {
+            vRingbufferReturnItem(_ringbuf_i2s, item);
+        }
+
+        ESP_LOGI(X_AUDIO_I2S_TAG, "I2S ringbuffer cleared");
+    }
+
+    i2s_channel_enable(_tx_chan);
 }

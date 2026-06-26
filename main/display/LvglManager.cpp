@@ -45,7 +45,7 @@ esp_err_t LvglManager::init(uint16_t width, uint16_t height)
         return ESP_ERR_INVALID_STATE;
     }
 
-    _lvgl_mux = xSemaphoreCreateMutex();
+    _lvgl_mux = xSemaphoreCreateRecursiveMutex();
 
     lv_init();
 
@@ -124,12 +124,12 @@ esp_err_t LvglManager::deinit()
 bool  LvglManager::lvgl_lock(int timeout_ms)
 {
     const TickType_t timeout_ticks = (timeout_ms == -1) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
-    return xSemaphoreTake(_lvgl_mux, timeout_ticks) == pdTRUE;
+    return xSemaphoreTakeRecursive(_lvgl_mux, timeout_ticks) == pdTRUE;
 }
 
 void LvglManager::lvgl_unlock()
 {
-    xSemaphoreGive(_lvgl_mux);
+    xSemaphoreGiveRecursive(_lvgl_mux);
 }
 
 void LvglManager::tickTimer(void *arg)

@@ -365,7 +365,7 @@ void SpeakerApp::handleA2dpData(const uint8_t *data, uint32_t len)
 
 void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param)
 {
-    ESP_LOGI(_XSPK_TAG, "AVRCP Controller event: %d", event);
+    // ESP_LOGI(_XSPK_TAG, "AVRCP Controller event: %d", event);
 
 
 
@@ -627,7 +627,7 @@ void SpeakerApp::saveCoverImageData(const uint8_t *data, uint32_t data_len)
 {
    _cover_image_size += data_len;
 
-    ESP_LOGI(_XSPK_TAG, "Received cover art data: %d", data_len);
+    // ESP_LOGI(_XSPK_TAG, "Received cover art data: %d", data_len);
 
     uint8_t *p_buf = (uint8_t *)realloc(_cover_image_data, _cover_image_size * sizeof(uint8_t));
     if (!p_buf) {
@@ -666,6 +666,7 @@ void SpeakerApp::playControlCb(UiMusicPlayer::play_ctrl_param_t ctrl_param)
 
 void SpeakerApp::handlePlayControl(uint16_t evt, UiMusicPlayer::play_ctrl_param_t *ctrl_param)
 {
+    _audio_i2s.clearI2sRingbuffer();
     if(ctrl_param->cmd == UiMusicPlayer::playControlCmd::PLAY) {
         ESP_LOGI(_XSPK_TAG, "Play command received");
         esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_PLAY, ESP_AVRC_PT_CMD_STATE_PRESSED);

@@ -12,7 +12,7 @@
 
 #define X_AUDIO_I2S_TAG       "AUDIO_I2S"
 
-static constexpr size_t RINGBUF_PREFETCH_WATER_LEVEL = 20 * 1024;
+static constexpr size_t RINGBUF_PREFETCH_WATER_LEVEL = 16 * 1024;
 static constexpr size_t RINGBUF_HIGHEST_WATER_LEVEL = 32 * 1024;
 
 enum class RingbufferMode {
@@ -65,6 +65,7 @@ public:
     void reConfigI2s(const i2s_std_clk_config_t &clk_cfg, const i2s_std_slot_config_t &slot_cfg);
 
     size_t sendToI2s(const uint8_t *data, size_t size);
+    void clearI2sRingbuffer();
 };
 
 

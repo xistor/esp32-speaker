@@ -211,11 +211,13 @@ void UiMusicPlayer::create_ui()
     _fft_running.store(true);
 
     esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
-    cfg.stack_size = 1024 * 16;
+    cfg.stack_size = 1024 * 4;
     cfg.thread_name = "fftProcessingTask";
+    cfg.pin_to_core = 0;
     esp_pthread_set_cfg(&cfg);
 
     _fft_process_thread = std::thread(&UiMusicPlayer::fftProcessingTask, this);
+    _visual_type = visualType::ALBUM_ART;
 
 }
 
@@ -375,6 +377,11 @@ void UiMusicPlayer::visual_switch_event_cb(lv_event_t * e)
 
 void UiMusicPlayer::audioVisual(const uint8_t *data, size_t size)
 {
+    if(_visual_type != visualType::SPECTRUM) {
+        // ESP_LOGI(_MP_TAG, "Audio visual data received but current visual type is not SPECTRUM. Ignoring.");
+        return;
+    }
+
     if (_ringbuf_fft == nullptr) {
         ESP_LOGE(_MP_TAG, "Ring buffer for FFT is not initialized");
         return;
@@ -410,7 +417,7 @@ void UiMusicPlayer::fftProcessingTask() {
             while (_fft_running.load()) {
                 size_t item_size = 0;
                 uint8_t *audio_data = static_cast<uint8_t *>(xRingbufferReceiveUpTo
-                    (_ringbuf_fft, &item_size, pdMS_TO_TICKS(5), FFT_SIZE * 4));
+                    (_ringbuf_fft, &item_size, pdMS_TO_TICKS(3), FFT_SIZE * 4));
                 
                 if (audio_data == nullptr || item_size == 0) {
                     // ESP_LOGI(_MP_TAG, "No audio data received, waiting...");
