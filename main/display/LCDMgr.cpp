@@ -27,8 +27,8 @@ void LCDMgr::init(uint16_t width, uint16_t height) {
     ESP_ERROR_CHECK(spi_bus_initialize((spi_host_device_t)CONFIG_LCD_HOST, &bus_cfg, SPI_DMA_CH_AUTO));
 
     esp_lcd_panel_io_spi_config_t io_config = {
-        .cs_gpio_num = CONFIG_LCD_CS,
-        .dc_gpio_num = CONFIG_LCD_DC,
+        .cs_gpio_num = (gpio_num_t)CONFIG_LCD_CS,
+        .dc_gpio_num = (gpio_num_t)CONFIG_LCD_DC,
         .spi_mode = 0,
         .pclk_hz = CONFIG_LCD_PIXEL_CLOCK_HZ,
         .trans_queue_depth = 10,
@@ -40,11 +40,16 @@ void LCDMgr::init(uint16_t width, uint16_t height) {
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)CONFIG_LCD_HOST,
                                              &io_config, &_io_handle));
 
-    esp_lcd_panel_dev_config_t panel_config = {
-        .reset_gpio_num = CONFIG_LCD_RST,
-        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
-        .bits_per_pixel = CONFIG_BITS_PER_PIXEL,
-    };
+    // esp_lcd_panel_dev_config_t panel_config = {
+    //     .reset_gpio_num = (gpio_num_t)CONFIG_LCD_RST,
+    //     .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+    //     .bits_per_pixel = CONFIG_BITS_PER_PIXEL,
+    // };
+
+    esp_lcd_panel_dev_config_t panel_config;
+    panel_config.reset_gpio_num = (gpio_num_t)CONFIG_LCD_RST;
+    panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB;
+    panel_config.bits_per_pixel = CONFIG_BITS_PER_PIXEL;
 
     ESP_LOGI(_LCDMGR_TAG, "Install ST7789 panel driver");
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(_io_handle, &panel_config, &_panel_handle));

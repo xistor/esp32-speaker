@@ -19,6 +19,10 @@
 - AVRCP 媒体控制与元数据获取（曲目/艺人/播放状态/封面图/播放进度）
 - 音乐频谱显示
 - 触摸屏交互
+- 编码支持SBC，AAC
+    AAC 支持需要ESP-IDF v6.2.0以上，且打开以下两个宏
+    CONFIG_BT_A2DP_USE_EXTERNAL_CODEC=y
+    CONFIG_BT_A2DP_CODEC_AAC_ENABLED=y
 
 ## 参考
 

@@ -5,6 +5,7 @@
 #include <cstring>
 #include "esp_spiffs.h"
 #include "jpeg_decoder.h"
+#include "esp_a2dp_api.h"
 
 SpeakerApp *SpeakerApp::s_instance = nullptr;
 
@@ -72,12 +73,6 @@ esp_err_t SpeakerApp::init()
     esp_bt_gap_register_callback(gapCallback);
 
     esp_a2d_register_callback(&a2dCallback);
-    esp_err_t ret = esp_a2d_sink_register_data_callback(a2dDataCallback);
-    if (ret != ESP_OK) {
-        ESP_LOGE(_XSPK_TAG, "Failed to register A2DP data callback: %s", esp_err_to_name(ret));
-    } else {
-        ESP_LOGI(_XSPK_TAG, "A2DP data callback registered successfully");
-    }
 
     esp_avrc_ct_register_callback(rcCtrlCallback);
     assert(esp_avrc_ct_init() == ESP_OK);
@@ -85,6 +80,21 @@ esp_err_t SpeakerApp::init()
     assert(esp_avrc_tg_init() == ESP_OK);
 
     ESP_ERROR_CHECK(esp_a2d_sink_init());
+
+#ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
+        registerA2dpSinkSeps();
+        _audio_decoder.regAudioI2sHandle(&_audio_i2s);
+        _audio_decoder.regUiMusicPlayerHandle(&_ui_music_player);
+        _audio_decoder.start();
+        esp_a2d_sink_register_audio_data_callback(a2dAudioDataCallback);
+#else
+        esp_err_t ret = esp_a2d_sink_register_data_callback(a2dDataCallback);
+        if (ret != ESP_OK) {
+            ESP_LOGE(_XSPK_TAG, "Failed to register A2DP data callback: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(_XSPK_TAG, "A2DP data callback registered successfully");
+        }
+#endif
 
     esp_err_t lv_err = LvglManager::instance().init(CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
     if (lv_err != ESP_OK) {
@@ -147,6 +157,25 @@ void SpeakerApp::a2dDataCallback(const uint8_t *data, uint32_t len)
         s_instance->handleA2dpData(data, len);
     }
 }
+
+#ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
+
+void SpeakerApp::a2dAudioDataCallback(esp_a2d_conn_hdl_t conn_hdl, esp_a2d_audio_buff_t *audio_buf)
+{
+    if (audio_buf == NULL || audio_buf->data == NULL || audio_buf->data_len == 0) {
+        if (audio_buf != NULL) {
+            esp_a2d_audio_buff_free(audio_buf);
+        }
+        return;
+    }
+
+    if(s_instance != nullptr) {
+        s_instance->_audio_decoder.pushAudioData(audio_buf);
+    }
+
+}
+
+#endif
 
 void SpeakerApp::rcCtrlCallback(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param)
 {
@@ -226,6 +255,9 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
             ESP_LOGI(_XSPK_TAG, "A2DP disconnected, set scan mode to connectable and discoverable, disable I2S channel");
             setScanModeConnectable(true, true);
+#ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
+            _audio_decoder.decoderDataFlush();
+#endif
             _audio_i2s.stop();
         }
         break;
@@ -234,6 +266,10 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
         break;
     case ESP_A2D_AUDIO_CFG_EVT:
         ESP_LOGI(_XSPK_TAG, "A2DP audio config changed: codec type %d", param->audio_cfg.mcc.type);
+
+#ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
+        _audio_decoder.applyMcc(&param->audio_cfg.mcc);
+#else
         if (param->audio_cfg.mcc.type == ESP_A2D_MCT_SBC) {
             int sample_rate = 16000;
             int ch_count = 2;
@@ -250,19 +286,21 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
             }
             i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG((uint32_t)sample_rate);
             i2s_std_slot_config_t slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
-                                                                              (i2s_slot_mode_t)ch_count);
+                                                                            (i2s_slot_mode_t)ch_count);
 
             _audio_i2s.reConfigI2s(clk_cfg, slot_cfg);
             ESP_LOGI(_XSPK_TAG, "Configure audio player: 0x%x-0x%x-0x%x-0x%x-0x%x-%d-%d",
-                     param->audio_cfg.mcc.cie.sbc_info.samp_freq,
-                     param->audio_cfg.mcc.cie.sbc_info.ch_mode,
-                     param->audio_cfg.mcc.cie.sbc_info.block_len,
-                     param->audio_cfg.mcc.cie.sbc_info.num_subbands,
-                     param->audio_cfg.mcc.cie.sbc_info.alloc_mthd,
-                     param->audio_cfg.mcc.cie.sbc_info.min_bitpool,
-                     param->audio_cfg.mcc.cie.sbc_info.max_bitpool);
+                    param->audio_cfg.mcc.cie.sbc_info.samp_freq,
+                    param->audio_cfg.mcc.cie.sbc_info.ch_mode,
+                    param->audio_cfg.mcc.cie.sbc_info.block_len,
+                    param->audio_cfg.mcc.cie.sbc_info.num_subbands,
+                    param->audio_cfg.mcc.cie.sbc_info.alloc_mthd,
+                    param->audio_cfg.mcc.cie.sbc_info.min_bitpool,
+                    param->audio_cfg.mcc.cie.sbc_info.max_bitpool);
             ESP_LOGI(_XSPK_TAG, "Audio player configured, sample rate: %d", sample_rate);
         }
+#endif
+
         break;
     case ESP_A2D_PROF_STATE_EVT:
         ESP_LOGI(_XSPK_TAG, "A2DP profile state changed: %d", param->a2d_prof_stat.init_state);
@@ -684,4 +722,54 @@ void SpeakerApp::handlePlayControl(uint16_t evt, UiMusicPlayer::play_ctrl_param_
         esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_FORWARD, ESP_AVRC_PT_CMD_STATE_PRESSED);
         esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_FORWARD, ESP_AVRC_PT_CMD_STATE_RELEASED); 
     }
+}
+
+void SpeakerApp::registerA2dpSinkSeps(void)
+{
+    esp_a2d_mcc_t mcc_aac = {0};
+    mcc_aac.type = ESP_A2D_MCT_M24;
+    mcc_aac.cie.m24_info.drc = ESP_A2D_M24_CIE_DRC_NS;
+    mcc_aac.cie.m24_info.obj_type = ESP_A2D_M24_CIE_OBJ_TYPE_2_AAC_LC |
+                                    ESP_A2D_M24_CIE_OBJ_TYPE_4_AAC_LC |
+                                    ESP_A2D_M24_CIE_OBJ_TYPE_4_HE_AAC |
+                                    ESP_A2D_M24_CIE_OBJ_TYPE_4_HE_AAC_V2;
+    mcc_aac.cie.m24_info.samp_freq1 = ESP_A2D_M24_CIE_SF1_8K |
+                                      ESP_A2D_M24_CIE_SF1_11K |
+                                      ESP_A2D_M24_CIE_SF1_12K |
+                                      ESP_A2D_M24_CIE_SF1_16K |
+                                      ESP_A2D_M24_CIE_SF1_22K |
+                                      ESP_A2D_M24_CIE_SF1_24K |
+                                      ESP_A2D_M24_CIE_SF1_32K |
+                                      ESP_A2D_M24_CIE_SF1_44K;
+    mcc_aac.cie.m24_info.samp_freq2 = ESP_A2D_M24_CIE_SF2_48K |
+                                      ESP_A2D_M24_CIE_SF2_64K |
+                                      ESP_A2D_M24_CIE_SF2_88K |
+                                      ESP_A2D_M24_CIE_SF2_96K;
+    mcc_aac.cie.m24_info.ch = ESP_A2D_M24_CIE_CH_1 |
+                              ESP_A2D_M24_CIE_CH_2;
+    mcc_aac.cie.m24_info.vbr = ESP_A2D_M24_CIE_VBR_SUPPORT;
+    mcc_aac.cie.m24_info.br1 = 0x7F & ESP_A2D_M24_CIE_BR1_MSK;
+    mcc_aac.cie.m24_info.br2 = 0xFF & ESP_A2D_M24_CIE_BR2_MSK;
+    mcc_aac.cie.m24_info.br3 = 0xFF & ESP_A2D_M24_CIE_BR3_MSK;
+    esp_a2d_sink_register_stream_endpoint(0, &mcc_aac);
+
+    esp_a2d_mcc_t mcc_sbc = {0};
+    mcc_sbc.type = ESP_A2D_MCT_SBC;
+    mcc_sbc.cie.sbc_info.samp_freq = ESP_A2D_SBC_CIE_SF_16K |
+                                     ESP_A2D_SBC_CIE_SF_32K |
+                                     ESP_A2D_SBC_CIE_SF_44K |
+                                     ESP_A2D_SBC_CIE_SF_48K;
+    mcc_sbc.cie.sbc_info.ch_mode = ESP_A2D_SBC_CIE_CH_MODE_MONO |
+                                   ESP_A2D_SBC_CIE_CH_MODE_DUAL_CHANNEL |
+                                   ESP_A2D_SBC_CIE_CH_MODE_STEREO |
+                                   ESP_A2D_SBC_CIE_CH_MODE_JOINT_STEREO;
+    mcc_sbc.cie.sbc_info.block_len = ESP_A2D_SBC_CIE_BLOCK_LEN_4 |
+                                     ESP_A2D_SBC_CIE_BLOCK_LEN_8 |
+                                     ESP_A2D_SBC_CIE_BLOCK_LEN_12 |
+                                     ESP_A2D_SBC_CIE_BLOCK_LEN_16;
+    mcc_sbc.cie.sbc_info.num_subbands = ESP_A2D_SBC_CIE_NUM_SUBBANDS_4 | ESP_A2D_SBC_CIE_NUM_SUBBANDS_8;
+    mcc_sbc.cie.sbc_info.alloc_mthd = ESP_A2D_SBC_CIE_ALLOC_MTHD_SNR | ESP_A2D_SBC_CIE_ALLOC_MTHD_LOUDNESS;
+    mcc_sbc.cie.sbc_info.min_bitpool = 2;
+    mcc_sbc.cie.sbc_info.max_bitpool = 250;
+    esp_a2d_sink_register_stream_endpoint(1, &mcc_sbc);
 }

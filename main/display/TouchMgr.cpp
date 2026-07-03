@@ -45,22 +45,32 @@ void TouchMgr::init() {
     };
 
     esp_lcd_panel_io_handle_t tp_io_handle = NULL;
-    esp_lcd_panel_io_i2c_config_t tp_io_config = {
-        .dev_addr = ESP_LCD_TOUCH_IO_I2C_CST816S_ADDRESS,
-        .on_color_trans_done = 0,
-        .user_ctx = 0,
-        .control_phase_bytes = 1,
-        .dc_bit_offset = 0,
-        .lcd_cmd_bits = 8,
-        .lcd_param_bits = 0,
-        .flags =
-        {
-            .dc_low_on_data = 0,
-            .disable_control_phase = 1,
-        },
-        .scl_speed_hz = 100000,
-    };
+    // esp_lcd_panel_io_i2c_config_t tp_io_config = {
+    //     .dev_addr = ESP_LCD_TOUCH_IO_I2C_CST816S_ADDRESS,
+    //     .on_color_trans_done = 0,
+    //     .user_ctx = 0,
+    //     .control_phase_bytes = 1,
+    //     .dc_bit_offset = 0,
+    //     .lcd_cmd_bits = 8,
+    //     .lcd_param_bits = 0,
+    //     .flags =
+    //     {
+    //         .dc_low_on_data = 0,
+    //         .disable_control_phase = 1,
+    //     },
+    //     .scl_speed_hz = 100000,
+    // };
 
+    esp_lcd_panel_io_i2c_config_t tp_io_config;
+    tp_io_config.dev_addr = ESP_LCD_TOUCH_IO_I2C_CST816S_ADDRESS;
+    tp_io_config.on_color_trans_done = 0;
+    tp_io_config.user_ctx = 0;
+    tp_io_config.control_phase_bytes = 1;
+    tp_io_config.dc_bit_offset = 0;
+    tp_io_config.lcd_cmd_bits = 8;
+    tp_io_config.lcd_param_bits = 0;
+    tp_io_config.flags.dc_low_on_data = 0;
+    tp_io_config.flags.disable_control_phase = 1;
     tp_io_config.scl_speed_hz = CONFIG_TOUCH_I2C_CLK_HZ;
 
     esp_lcd_new_panel_io_i2c(_i2c_handle, &tp_io_config, &tp_io_handle);
