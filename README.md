@@ -1,4 +1,4 @@
-# X Speaker 2.0
+# ESP Speaker
 
 [ENGLISH README](README_EN.md)
 
@@ -8,7 +8,7 @@
 ## 软硬件环境
 
 - ESP32-WROVER N16R8模组， 须支持classic bt的, PSRAM越大越好
-- 主要外设：I2S解码 PCM5102， 屏幕 ST7789, 触摸 CST816S。
+- 主要外设：I2S DAC PCM5102， 屏幕 ST7789, 触摸 CST816S。
 - ESP-IDF 开发框架，使用5.5.3之后的版本。
 - VSCODE
 - C++
@@ -20,8 +20,8 @@
 - 音乐频谱显示
 - 触摸屏交互
 - 编码支持SBC，AAC
-    AAC 支持需要ESP-IDF v6.2.0以上，且打开以下两个宏
-    CONFIG_BT_A2DP_USE_EXTERNAL_CODEC=y
+    AAC 支持需要ESP-IDF v6.2.0以上，且打开以下两个宏  
+    CONFIG_BT_A2DP_USE_EXTERNAL_CODEC=y  
     CONFIG_BT_A2DP_CODEC_AAC_ENABLED=y
 
 ## 参考

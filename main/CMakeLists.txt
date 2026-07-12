@@ -3,6 +3,8 @@ file(GLOB_RECURSE SOURCES
     "audio/*.cpp"
     "display/*.cpp"
     "fonts/*.c"
+    "ui/*.cpp"
+    "ui/*.c"
 )
 idf_component_register(SRCS ${SOURCES}
                     INCLUDE_DIRS "." "audio" "display" "common" "ui")

@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 14 px
  * Bpp: 2
- * Opts: --bpp 2 --size 14 --stride 1 --align 1 --font Font Awesome 7 Free-Solid-900.otf --range 61440-61695 --format lvgl -o awsome_14.c
+ * Opts: --bpp 2 --size 14 --stride 1 --align 1 --font Font Awesome 7 Free-Solid-900.otf --range 61440-61695 --format lvgl -o awesome_14.c
  ******************************************************************************/
 
 #ifdef __has_include
@@ -1899,9 +1899,9 @@ extern const lv_font_t Noto_14;
 
 /*Initialize a public general font descriptor*/
 #if LVGL_VERSION_MAJOR >= 8
-const lv_font_t awsome_14 = {
+const lv_font_t awesome_14 = {
 #else
-lv_font_t awsome_14 = {
+lv_font_t awesome_14 = {
 #endif
     .get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt,    /*Function pointer to get glyph's data*/
     .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt,    /*Function pointer to get glyph's bitmap*/

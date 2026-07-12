@@ -148,6 +148,7 @@ void AudioI2s::i2sTask()
                     break;
                 }
                 i2s_channel_write(_tx_chan, data, item_size, &bytes_written, portMAX_DELAY);
+                ESP_LOGI(X_AUDIO_I2S_TAG, "i2s_channel_write wrote %zu bytes", bytes_written);
                 vRingbufferReturnItem(_ringbuf_i2s, data);
             }
         }
@@ -158,12 +159,30 @@ size_t AudioI2s::sendToI2s(const uint8_t *data, size_t size)
 {
     size_t item_size = 0;
     BaseType_t done = pdFALSE;
+    static int fail_count = 0;
 
     if (_ringbuffer_mode == RingbufferMode::DROPPING) {
         ESP_LOGW(X_AUDIO_I2S_TAG, "ringbuffer is full, drop this packet!");
+        fail_count++;
         vRingbufferGetInfo(_ringbuf_i2s, NULL, NULL, NULL, NULL, &item_size);
         if (item_size <= RINGBUF_PREFETCH_WATER_LEVEL) {
             ESP_LOGI(X_AUDIO_I2S_TAG, "ringbuffer data decreased! mode changed: PROCESSING");
+            _ringbuffer_mode = RingbufferMode::PROCESSING;
+            fail_count = 0;
+        }
+
+        if(fail_count > 10) {
+            ESP_LOGE(X_AUDIO_I2S_TAG, "ringbuffer is full, drop too many packets! reset");
+            size_t dummy_size = 0;
+            void* dummy_item = NULL;
+            while ((dummy_item = xRingbufferReceive(_ringbuf_i2s, &dummy_size, 0)) != NULL) {
+                vRingbufferReturnItem(_ringbuf_i2s, dummy_item);
+            }
+
+            i2s_channel_disable(_tx_chan);
+            esp_rom_delay_us(100);
+            i2s_channel_enable(_tx_chan);
+
             _ringbuffer_mode = RingbufferMode::PROCESSING;
         }
         return 0;
@@ -192,7 +211,7 @@ size_t AudioI2s::sendToI2s(const uint8_t *data, size_t size)
 
 void AudioI2s::clearI2sRingbuffer()
 {
-    i2s_channel_disable(_tx_chan);
+    ESP_ERROR_CHECK(i2s_channel_disable(_tx_chan));
 
     uint8_t *item = nullptr;
     size_t item_size = 0;
@@ -205,5 +224,5 @@ void AudioI2s::clearI2sRingbuffer()
         ESP_LOGI(X_AUDIO_I2S_TAG, "I2S ringbuffer cleared");
     }
 
-    i2s_channel_enable(_tx_chan);
+    ESP_ERROR_CHECK(i2s_channel_enable(_tx_chan));
 }

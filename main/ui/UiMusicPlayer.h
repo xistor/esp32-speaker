@@ -6,6 +6,7 @@
 #include "lvgl.h"
 #include "freertos/ringbuf.h"
 #include "freertos/semphr.h"
+#include "esp_adc/adc_oneshot.h"
 
 class UiMusicPlayer {
 public:
@@ -57,6 +58,9 @@ private:
     lv_obj_t *_play_slider = nullptr;
     lv_obj_t *_sp_cont = nullptr;
     lv_obj_t *_band_objs[CONFIG_UI_SPECTRUM_BANDS_NUMS];
+    lv_obj_t *_battery_area = nullptr;
+    lv_obj_t *_battery_text = nullptr;
+    lv_obj_t *_battery_bar = nullptr;
 
     lv_font_t *_font = nullptr;
     lv_anim_t _rotate_anim;
@@ -80,10 +84,17 @@ private:
 
     visualType _visual_type = visualType::SPECTRUM;
 
+    adc_oneshot_unit_handle_t _adc1_handle;
+    std::thread _bat_volt_read_thread;
+
     void handlePlayCtrlEvent(lv_event_t * e);
     void fftProcessingTask();
     void calculateBandWidths();
 
+    void initBatteryAdc();
+    float getRealBatteryVoltage();
+    void batteryVoltageReadTask();
+    float getBatteryPercentage(float voltage);
 };
 
 #endif // __UI_MUSIC_PLAYER_H__

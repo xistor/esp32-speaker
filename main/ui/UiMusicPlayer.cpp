@@ -6,9 +6,19 @@
 #include "esp_dsp.h"
 #include "esp_pthread.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+    LV_IMAGE_DECLARE(default_albumart);
+
+#ifdef __cplusplus
+}
+#endif
+
 extern "C" {
     LV_FONT_DECLARE(Noto_14);
-    LV_FONT_DECLARE(awsome_14);
+    LV_FONT_DECLARE(awesome_14);
 }
 
 UiMusicPlayer *UiMusicPlayer::s_instance = nullptr;
@@ -74,20 +84,60 @@ void UiMusicPlayer::create_ui()
     lv_obj_remove_flag(main_cont, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_center(main_cont);
 
+    // 1.1 battery
+    _battery_area = lv_obj_create(main_cont);
+    lv_obj_remove_style_all(_battery_area); 
+    lv_obj_set_size(_battery_area, 55, 20);
+    lv_obj_align(_battery_area, LV_ALIGN_TOP_RIGHT, -10, 5); 
+
+    _battery_text = lv_label_create(_battery_area);
+    lv_label_set_text(_battery_text, "--%");
+    lv_obj_set_style_text_font(_battery_text, &awesome_14, 0); 
+    lv_obj_align(_battery_text, LV_ALIGN_LEFT_MID, 0, 0); 
+
+    lv_obj_t* battery_shell = lv_obj_create(_battery_area);
+    lv_obj_set_size(battery_shell, 20, 10);
+    lv_obj_align(battery_shell, LV_ALIGN_RIGHT_MID, -5, 0); 
+    lv_obj_set_style_border_width(battery_shell, 1, 0); 
+    lv_obj_set_style_border_color(battery_shell, lv_color_white(), 0); 
+    lv_obj_set_style_radius(battery_shell, 2, 0); 
+    lv_obj_set_style_bg_opa(battery_shell, LV_OPA_TRANSP, 0); 
+    lv_obj_remove_flag(battery_shell, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(battery_shell, 0, 0);
+    lv_obj_set_style_clip_corner(battery_shell, 0, 0);
+
+    lv_obj_t* battery_tip = lv_obj_create(_battery_area);
+    lv_obj_remove_style_all(battery_tip); 
+    lv_obj_set_size(battery_tip, 2, 4);
+    lv_obj_align_to(battery_tip, battery_shell, LV_ALIGN_OUT_RIGHT_MID, 0, 0); 
+    lv_obj_set_style_bg_color(battery_tip, lv_color_white(), 0); 
+    lv_obj_set_style_bg_opa(battery_tip, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(battery_tip, 1, 0); 
+
+    _battery_bar = lv_obj_create(battery_shell);
+    lv_obj_remove_style_all(_battery_bar);
+
+    lv_obj_set_size(_battery_bar, 10, 6); 
+    lv_obj_align(_battery_bar, LV_ALIGN_LEFT_MID, 1, 0);
+
+    lv_obj_set_style_bg_color(_battery_bar, lv_palette_main(LV_PALETTE_GREEN), 0); 
+    lv_obj_set_style_bg_opa(_battery_bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(_battery_bar, 1, 0);
+
     // 2. Album Art - Now at the TOP
      _album_art = lv_image_create(main_cont);
     lv_obj_set_size(_album_art, 130, 130);
     lv_obj_set_style_bg_color(_album_art, lv_color_hex(0x1A1A1A), 0);
     lv_obj_set_style_border_width(_album_art, 0, 0);
     lv_obj_set_style_pad_all(_album_art, 0, 0);
-    lv_obj_align(_album_art, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_align(_album_art, LV_ALIGN_TOP_MID, 0, 24);
     lv_obj_clear_flag(_album_art, LV_OBJ_FLAG_SCROLLABLE);
-    lv_image_set_src(_album_art, LV_SYMBOL_AUDIO);
-    uint32_t scale_factor = (130 * 256) / 200; // Result is 166 (approx 65%)
+    lv_image_set_src(_album_art, &default_albumart);
+    uint32_t scale_factor = (130 * LV_SCALE_NONE) / 200; // Result is 166 (approx 65%)
 
     lv_image_set_scale(_album_art, scale_factor);
     lv_image_set_pivot(_album_art, 100, 100); // Center of the original 200x200 image
-    
+
     lv_obj_add_flag(_album_art, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(_album_art, visual_switch_event_cb, LV_EVENT_CLICKED, NULL);
 
@@ -95,7 +145,7 @@ void UiMusicPlayer::create_ui()
     _sp_cont = lv_obj_create(main_cont);
     int _sp_cont_width = CONFIG_LCD_H_RES - 40;
     lv_obj_set_size(_sp_cont, _sp_cont_width, 120); 
-    lv_obj_align(_sp_cont, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_align(_sp_cont, LV_ALIGN_TOP_MID, 0, 24);
 
     lv_obj_set_style_pad_all(_sp_cont, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(_sp_cont, 0, LV_PART_MAIN);
@@ -138,7 +188,7 @@ void UiMusicPlayer::create_ui()
     lv_obj_set_style_text_color(_title, lv_color_hex(0xFFFFFF), 0);
     lv_label_set_long_mode(_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_style_text_align(_title, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(_title, &awsome_14, 0);
+    lv_obj_set_style_text_font(_title, &awesome_14, 0);
     lv_obj_align_to(_title, _sp_cont, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 
     // 4. Artist Name - Positioned BELOW Song Title
@@ -149,7 +199,7 @@ void UiMusicPlayer::create_ui()
     lv_obj_set_style_text_color(_artist, lv_color_hex(0xAAAAAA), 0);
     lv_obj_set_style_text_align(_artist, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(_artist, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_font(_artist, &awsome_14, 0);
+    lv_obj_set_style_text_font(_artist, &awesome_14, 0);
     lv_obj_align_to(_artist, _title, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
 
     // 5. Progress Slider
@@ -183,7 +233,7 @@ void UiMusicPlayer::create_ui()
 
     lv_obj_t * label_prev = lv_label_create(btn_prev);
     lv_label_set_text(label_prev, LV_SYMBOL_PREV);
-    lv_obj_set_style_text_font(label_prev, &awsome_14, 0);
+    lv_obj_set_style_text_font(label_prev, &awesome_14, 0);
     lv_obj_set_style_text_color(label_prev, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(label_prev);
     lv_obj_add_event_cb(btn_prev, play_ctrl_event_cb, LV_EVENT_CLICKED, (void *)2);
@@ -199,7 +249,7 @@ void UiMusicPlayer::create_ui()
 
     lv_obj_t * label_next = lv_label_create(btn_next);
     lv_label_set_text(label_next, LV_SYMBOL_NEXT);
-    lv_obj_set_style_text_font(label_next, &awsome_14, 0);
+    lv_obj_set_style_text_font(label_next, &awesome_14, 0);
     lv_obj_set_style_text_color(label_next, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(label_next);
     lv_obj_add_event_cb(btn_next, play_ctrl_event_cb, LV_EVENT_CLICKED, (void *)3);
@@ -213,12 +263,15 @@ void UiMusicPlayer::create_ui()
     esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
     cfg.stack_size = 1024 * 4;
     cfg.thread_name = "fftProcessingTask";
-    cfg.pin_to_core = 0;
+    cfg.pin_to_core = 1;
     esp_pthread_set_cfg(&cfg);
 
     _fft_process_thread = std::thread(&UiMusicPlayer::fftProcessingTask, this);
     _visual_type = visualType::ALBUM_ART;
 
+
+    initBatteryAdc();
+    _bat_volt_read_thread = std::thread(&UiMusicPlayer::batteryVoltageReadTask, this);
 }
 
 void UiMusicPlayer::setTitle(const char *title)
@@ -494,5 +547,93 @@ void UiMusicPlayer::calculateBandWidths(void) {
         
         // Update marker
         last_end_index = current_end_index;
+    }
+}
+
+void UiMusicPlayer::initBatteryAdc() {
+    adc_oneshot_unit_init_cfg_t init_config = {
+        .unit_id = ADC_UNIT_1,
+        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
+    };
+    adc_oneshot_new_unit(&init_config, &_adc1_handle);
+
+    adc_oneshot_chan_cfg_t chan_config = {
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    adc_oneshot_config_channel(_adc1_handle, ADC_CHANNEL_7, &chan_config);
+}
+
+float UiMusicPlayer::getRealBatteryVoltage() {
+    int adc_raw = 0;
+    adc_oneshot_read(_adc1_handle, ADC_CHANNEL_7, &adc_raw);
+
+    float pin_v = (adc_raw / 4095.0f) * 3.3f;
+    float bat_v = pin_v * 8.0f * 1.031f; 
+
+    return bat_v;
+}
+
+void UiMusicPlayer::batteryVoltageReadTask() {
+    while (true) {
+        static float filtered_voltage = -1.0f;
+
+        float current_raw_voltage = getRealBatteryVoltage();
+
+        if (filtered_voltage < 0) {
+            filtered_voltage = current_raw_voltage;
+        } else {
+            filtered_voltage = (filtered_voltage * 0.95f) + (current_raw_voltage * 0.05f);
+        }
+
+        int percentage = (int)getBatteryPercentage(filtered_voltage);
+        char voltage_str[32];
+        snprintf(voltage_str, sizeof(voltage_str), "%d%%", percentage);
+
+        if(LvglManager::lvgl_lock(_lock_timeout_ms) == false) {
+            ESP_LOGE(_MP_TAG, "Failed to acquire LVGL lock to set play position");
+            continue;
+        }
+        lv_label_set_text(_battery_text, voltage_str);
+        int target_width = (percentage * 16) / 100;
+    
+        if (target_width <= 0 && percentage > 0) target_width = 1;
+
+        lv_obj_set_width(_battery_bar, target_width);
+
+        if (percentage <= 20) {
+            lv_obj_set_style_bg_color(_battery_bar, lv_palette_main(LV_PALETTE_RED), 0);
+        } else if (percentage <= 35) {
+            lv_obj_set_style_bg_color(_battery_bar, lv_palette_main(LV_PALETTE_ORANGE), 0);
+        } else {
+            lv_obj_set_style_bg_color(_battery_bar, lv_palette_main(LV_PALETTE_GREEN), 0);
+        }
+        LvglManager::lvgl_unlock();
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
+float UiMusicPlayer::getBatteryPercentage(float voltage) {
+    if (voltage >= 16.70f) return 100.0f;
+
+    if (voltage <= 11.20f) return 0.0f;
+
+    if (voltage > 16.0f) {
+        return 90.0f + (voltage - 16.0f) * (10.0f / 0.7f);
+    } 
+    else if (voltage > 15.2f) {
+        return 75.0f + (voltage - 15.2f) * (15.0f / 0.8f);
+    } 
+    else if (voltage > 14.8f) {
+        return 50.0f + (voltage - 14.8f) * (25.0f / 0.4f);
+    } 
+    else if (voltage > 14.2f) {
+        return 30.0f + (voltage - 14.2f) * (20.0f / 0.6f);
+    } 
+    else if (voltage > 13.2f) {
+        return 15.0f + (voltage - 13.2f) * (15.0f / 1.0f);
+    } 
+    else {
+        return 0.0f + (voltage - 11.2f) * (15.0f / 2.0f);
     }
 }

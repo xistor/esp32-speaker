@@ -1,4 +1,4 @@
-# X Speaker 2.0
+# ESP Speaker
 
 ## Introduction
 
@@ -7,7 +7,7 @@ A DIY Bluetooth speaker using ESP32.
 ## Software and Hardware Environment
 
 - ESP32-WROVER N16R8 module, must support Classic Bluetooth, higher PSRAM is better
-- Main peripherals: I2S decoder PCM5102, display ST7789, touch controller CST816S
+- Main peripherals: I2S DAC PCM5102, display ST7789, touch controller CST816S
 - ESP-IDF development framework, use version 5.5.3 or later
 - VSCODE
 - C++
@@ -19,8 +19,8 @@ A DIY Bluetooth speaker using ESP32.
 - Music spectrum display
 - Touch screen interaction
 - Codec support: SBC, AAC
-  - AAC support requires ESP-IDF v6.2.0 or above and the following options enabled:
-    - CONFIG_BT_A2DP_USE_EXTERNAL_CODEC=y
+  - AAC support requires ESP-IDF v6.2.0 or above and the following options enabled:  
+    - CONFIG_BT_A2DP_USE_EXTERNAL_CODEC=y  
     - CONFIG_BT_A2DP_CODEC_AAC_ENABLED=y
 
 ## Reference
