@@ -9,6 +9,7 @@
 #include "esp_bt_main.h"
 #include "esp_gap_bt_api.h"
 #include "esp_avrc_api.h"
+#include "esp_spp_api.h"
 
 #include "BlockingQueue.h"
 #include "UiMusicPlayer.h"
@@ -62,6 +63,7 @@ private:
     // singleton instance.
     static void a2dCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param);
     static void gapCallback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
+    static void sppCallback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
     static void a2dDataCallback(const uint8_t *data, uint32_t len);
     static void a2dAudioDataCallback(esp_a2d_conn_hdl_t conn_hdl, esp_a2d_audio_buff_t *audio_buf);
     static void rcCtrlCallback(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param); 
@@ -74,6 +76,7 @@ private:
 
     void handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param);
     void handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
+    void handleSppEvent(esp_spp_cb_event_t event, esp_spp_cb_param_t *param);
     void handleA2dpData(const uint8_t *data, uint32_t len);
     void handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param);
     void handleRcTgEvent(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param);
@@ -92,6 +95,14 @@ private:
 
     void saveCoverImageData(const uint8_t *data, uint32_t len);
 
+    void checkAndConnectBondedDevice();
+
+    void a2dInit();
+    void a2dDeinit();
+
+    void savePeerAddress(const esp_bd_addr_t addr);
+    bool getSavedPeerAddress(esp_bd_addr_t addr);
+
     const char *_device_name = CONFIG_SPEAKER_DEVICE_NAME;
     AudioI2s _audio_i2s;
 #ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
@@ -105,6 +116,11 @@ private:
 
     BlockingQueue <bt_app_msg_t> _bt_msg_queue;
     std::thread _msg_handler_thread;
+
+    uint8_t _remote_scn = 0;
+    esp_bd_addr_t _saved_peer_addr = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+    const esp_spp_sec_t _sec_mask = ESP_SPP_SEC_AUTHENTICATE;
+    const esp_spp_role_t _role_master = ESP_SPP_ROLE_MASTER;
 
 };
 

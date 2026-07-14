@@ -21,6 +21,44 @@ SpeakerApp::~SpeakerApp()
     // Nothing special; controller/bluedroid shutdown could be added here.
 }
 
+void SpeakerApp::a2dInit() {
+    esp_a2d_register_callback(&a2dCallback);
+
+    esp_avrc_ct_register_callback(rcCtrlCallback);
+    assert(esp_avrc_ct_init() == ESP_OK);
+    esp_avrc_tg_register_callback(rcTgCallback);
+    assert(esp_avrc_tg_init() == ESP_OK);
+
+    ESP_ERROR_CHECK(esp_a2d_sink_init());
+
+#ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
+        registerA2dpSinkSeps();
+        _audio_decoder.regAudioI2sHandle(&_audio_i2s);
+        _audio_decoder.regUiMusicPlayerHandle(&_ui_music_player);
+        _audio_decoder.start();
+        esp_a2d_sink_register_audio_data_callback(a2dAudioDataCallback);
+#else
+        esp_err_t ret = esp_a2d_sink_register_data_callback(a2dDataCallback);
+        if (ret != ESP_OK) {
+            ESP_LOGE(_XSPK_TAG, "Failed to register A2DP data callback: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(_XSPK_TAG, "A2DP data callback registered successfully");
+        }
+#endif
+    esp_a2d_sink_get_delay_value();
+}
+
+void SpeakerApp::a2dDeinit() {
+    esp_avrc_ct_deinit();
+    esp_avrc_tg_deinit();
+    esp_a2d_sink_deinit();
+
+#ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
+    _audio_decoder.stop();
+#endif
+
+}
+
 esp_err_t SpeakerApp::init()
 {
     esp_err_t err;
@@ -72,29 +110,7 @@ esp_err_t SpeakerApp::init()
     esp_bt_gap_set_device_name(_device_name);
     esp_bt_gap_register_callback(gapCallback);
 
-    esp_a2d_register_callback(&a2dCallback);
-
-    esp_avrc_ct_register_callback(rcCtrlCallback);
-    assert(esp_avrc_ct_init() == ESP_OK);
-    esp_avrc_tg_register_callback(rcTgCallback);
-    assert(esp_avrc_tg_init() == ESP_OK);
-
-    ESP_ERROR_CHECK(esp_a2d_sink_init());
-
-#ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
-        registerA2dpSinkSeps();
-        _audio_decoder.regAudioI2sHandle(&_audio_i2s);
-        _audio_decoder.regUiMusicPlayerHandle(&_ui_music_player);
-        _audio_decoder.start();
-        esp_a2d_sink_register_audio_data_callback(a2dAudioDataCallback);
-#else
-        esp_err_t ret = esp_a2d_sink_register_data_callback(a2dDataCallback);
-        if (ret != ESP_OK) {
-            ESP_LOGE(_XSPK_TAG, "Failed to register A2DP data callback: %s", esp_err_to_name(ret));
-        } else {
-            ESP_LOGI(_XSPK_TAG, "A2DP data callback registered successfully");
-        }
-#endif
+    a2dInit();
 
     esp_err_t lv_err = LvglManager::instance().init(CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
     if (lv_err != ESP_OK) {
@@ -102,9 +118,13 @@ esp_err_t SpeakerApp::init()
         return lv_err;
     }
 
+    esp_spp_register_callback(sppCallback);
+    esp_spp_cfg_t spp_cfg = {
+        .mode = ESP_SPP_MODE_CB,
+        .enable_l2cap_ertm = true,
+    };
+    ESP_ERROR_CHECK(esp_spp_enhanced_init(&spp_cfg));
 
-    /* Get the default value of the delay value */
-    esp_a2d_sink_get_delay_value();
     /* Get local device name */
     esp_bt_gap_get_device_name();
 
@@ -151,6 +171,14 @@ void SpeakerApp::gapCallback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t 
     }
 }
 
+void SpeakerApp::sppCallback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
+{
+    if (s_instance){
+        s_instance->msgDispatch([event](uint16_t evt, void *p) {
+            s_instance->handleSppEvent(event, (esp_spp_cb_param_t *)p);
+        }, event, param, sizeof(esp_spp_cb_param_t));
+    }
+}
 void SpeakerApp::a2dDataCallback(const uint8_t *data, uint32_t len)
 {
     if (s_instance) {
@@ -251,14 +279,21 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED) {
             ESP_LOGI(_XSPK_TAG, "A2DP connected, set scan mode to non-connectable and non-discoverable, enable I2S channel");
             setScanModeConnectable(false, false);
-            _audio_i2s.enableI2s();
+            savePeerAddress(param->conn_stat.remote_bda);
+
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
             ESP_LOGI(_XSPK_TAG, "A2DP disconnected, set scan mode to connectable and discoverable, disable I2S channel");
-            setScanModeConnectable(true, true);
 #ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
             _audio_decoder.decoderDataFlush();
 #endif
             _audio_i2s.stop();
+
+            //reset a2dp
+            a2dDeinit();
+            a2dInit();
+
+            setScanModeConnectable(true, true);
+
         }
         break;
     case ESP_A2D_AUDIO_STATE_EVT:
@@ -386,6 +421,90 @@ void SpeakerApp::handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param
         break;
     default:
         ESP_LOGI(_XSPK_TAG, "event: %d", event);
+        break;
+    }
+}
+
+void SpeakerApp::savePeerAddress(const esp_bd_addr_t bda) {
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("bt_storage", NVS_READWRITE, &my_handle);
+    if (err == ESP_OK) {
+        nvs_set_blob(my_handle, "last_mac", bda, sizeof(esp_bd_addr_t));
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+    }
+}
+
+bool SpeakerApp::getSavedPeerAddress(esp_bd_addr_t out_bda) {
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("bt_storage", NVS_READONLY, &my_handle);
+    if (err == ESP_OK) {
+        size_t required_size = sizeof(esp_bd_addr_t);
+        err = nvs_get_blob(my_handle, "last_mac", out_bda, &required_size);
+        nvs_close(my_handle);
+        if (err == ESP_OK) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
+#define SPP_SERVER_NAME "ESP32_Earphone_Server"
+
+
+void SpeakerApp::checkAndConnectBondedDevice(void) {
+    esp_spp_start_srv(_sec_mask, ESP_SPP_ROLE_SLAVE, 0, SPP_SERVER_NAME);
+
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+
+    if (getSavedPeerAddress(_saved_peer_addr)) {
+        ESP_LOGI(_XSPK_TAG, "Previously bonded device found, attempting to proactively connect...");
+        esp_a2d_sink_connect(_saved_peer_addr);
+
+    } else {
+        ESP_LOGI(_XSPK_TAG, "No previously bonded device found. Please open the phone app, search, and pair once first.");
+    }
+}
+
+void SpeakerApp::handleSppEvent(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
+{
+    ESP_LOGI(_XSPK_TAG, "SPP callback event: %d", event);
+
+    switch (event) {
+    case ESP_SPP_INIT_EVT:
+        ESP_LOGI(_XSPK_TAG, "SPP initialization complete, triggering reconnect check...");
+        checkAndConnectBondedDevice();
+        break;
+
+    case ESP_SPP_START_EVT:
+        ESP_LOGI(_XSPK_TAG, "SPP local server is running and listening on channel: %d", param->start.scn);
+        break;
+
+    case ESP_SPP_OPEN_EVT:
+        if (param->open.status == ESP_SPP_SUCCESS) {
+            ESP_LOGI(_XSPK_TAG, "Classic Bluetooth: proactively connected to the phone successfully! Handle: %" PRIu32, param->open.handle);
+        } else {
+            ESP_LOGW(_XSPK_TAG, "Proactive connection to the phone was not successful (error code: %d). The peer may not be listening in the app. The device remains visible, and you can connect from the phone.", param->open.status);
+        }
+        break;
+
+    case ESP_SPP_SRV_OPEN_EVT:
+        if (param->srv_open.status == ESP_SPP_SUCCESS) {
+            ESP_LOGI(_XSPK_TAG, "Classic Bluetooth: the phone has connected to the local server! Handle: %" PRIu32, param->srv_open.handle);
+        }
+        break;
+
+    case ESP_SPP_CLOSE_EVT:
+        ESP_LOGW(_XSPK_TAG, "Bluetooth link disconnected; reopening discoverability and waiting for reconnect");
+        esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+        break;
+
+    case ESP_SPP_DATA_IND_EVT:
+        ESP_LOGI(_XSPK_TAG, "Data received, length: %d", param->data_ind.len);
+        break;
+
+    default:
         break;
     }
 }

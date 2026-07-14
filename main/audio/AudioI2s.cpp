@@ -52,6 +52,7 @@ AudioI2sError AudioI2s::start()
         ESP_LOGE(X_AUDIO_I2S_TAG, "i2s_channel_init_std_mode failed: %s", esp_err_to_name(err));
         return AudioI2sError::NONE;
     }
+    ESP_ERROR_CHECK(i2s_channel_enable(_tx_chan));
 
     _ringbuffer_mode.store(RingbufferMode::PREFETCHING);
 
@@ -99,6 +100,8 @@ void AudioI2s::stop()
 
     if (_i2s_task_thread.joinable()) {
         _i2s_task_thread.join();
+    } else {
+        ESP_LOGW(X_AUDIO_I2S_TAG, "i2s_task_thread not joinable");
     }
 
     if (_tx_chan) {
@@ -148,7 +151,6 @@ void AudioI2s::i2sTask()
                     break;
                 }
                 i2s_channel_write(_tx_chan, data, item_size, &bytes_written, portMAX_DELAY);
-                ESP_LOGI(X_AUDIO_I2S_TAG, "i2s_channel_write wrote %zu bytes", bytes_written);
                 vRingbufferReturnItem(_ringbuf_i2s, data);
             }
         }
