@@ -29,7 +29,7 @@ void AudioDecoder::start()
     esp_pthread_set_cfg(&cfg);
 
     _decode_task_thread = std::thread(&AudioDecoder::audio_decode_task, this);
-    
+
 }
 
 void AudioDecoder::stop()

@@ -213,6 +213,11 @@ size_t AudioI2s::sendToI2s(const uint8_t *data, size_t size)
 
 void AudioI2s::clearI2sRingbuffer()
 {
+    if(_tx_chan == nullptr || _ringbuf_i2s == nullptr) {
+        ESP_LOGW(X_AUDIO_I2S_TAG, "clearI2sRingbuffer called but I2S channel or ringbuffer is not initialized");
+        return;
+    }
+
     ESP_ERROR_CHECK(i2s_channel_disable(_tx_chan));
 
     uint8_t *item = nullptr;

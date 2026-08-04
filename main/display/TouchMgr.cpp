@@ -15,6 +15,8 @@ TouchMgr::TouchMgr() {
 
 void TouchMgr::init() {
 
+    ESP_LOGI(_TAG_TOUCH, "Initializing TouchMgr...");
+
     /* Initilize I2C */
     i2c_master_bus_config_t i2c_config = {
         .i2c_port = (gpio_num_t)CONFIG_TOUCH_I2C_NUM,

@@ -1,6 +1,7 @@
 #ifndef __TOUCH_MGR_H__
 #define __TOUCH_MGR_H__
 
+#include <mutex>
 #include <thread>
 #include "lvgl.h"
 #include "freertos/FreeRTOS.h"

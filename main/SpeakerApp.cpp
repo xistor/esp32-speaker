@@ -18,7 +18,7 @@ SpeakerApp::SpeakerApp()
 
 SpeakerApp::~SpeakerApp()
 {
-    // Nothing special; controller/bluedroid shutdown could be added here.
+    _audio_i2s.stop();
 }
 
 void SpeakerApp::a2dInit() {
@@ -142,6 +142,11 @@ esp_err_t SpeakerApp::init()
     _ui_music_player.regPlayCtrlCallback(std::bind(&SpeakerApp::playControlCb, this, std::placeholders::_1));
 
     ESP_LOGI(_XSPK_TAG, "UI created successfully");
+
+    gpio_reset_pin(GPIO_NUM_14);
+    gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_14, 1);
+
     return ESP_OK;
 }
 
@@ -149,6 +154,12 @@ void SpeakerApp::configureI2s(const i2s_chan_config_t &chan_cfg,
                               const i2s_std_config_t &std_cfg)
 {
     _audio_i2s.configI2s(chan_cfg, std_cfg);
+
+    ESP_LOGI(_XSPK_TAG, "installing I2S driver");
+    AudioI2sError err = _audio_i2s.start();
+    if( err != AudioI2sError::NONE) {
+        ESP_LOGE(_XSPK_TAG, "Failed to start audio i2s err: %d", static_cast<int>(err));
+    }
 }
 
 /* static callbacks */
@@ -271,11 +282,7 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
                  param->conn_stat.remote_bda[3], param->conn_stat.remote_bda[4], param->conn_stat.remote_bda[5]);
 
         if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTING) {
-            ESP_LOGI(_XSPK_TAG, "A2DP connecting, installing I2S driver");
-            AudioI2sError err = _audio_i2s.start();
-            if( err != AudioI2sError::NONE) {
-                ESP_LOGE(_XSPK_TAG, "Failed to start audio i2s err: %d", static_cast<int>(err));
-            }
+
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED) {
             ESP_LOGI(_XSPK_TAG, "A2DP connected, set scan mode to non-connectable and non-discoverable, enable I2S channel");
             setScanModeConnectable(false, false);
@@ -286,7 +293,6 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
 #ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
             _audio_decoder.decoderDataFlush();
 #endif
-            _audio_i2s.stop();
 
             //reset a2dp
             a2dDeinit();
@@ -450,7 +456,7 @@ bool SpeakerApp::getSavedPeerAddress(esp_bd_addr_t out_bda) {
 }
 
 
-#define SPP_SERVER_NAME "ESP32_Earphone_Server"
+#define SPP_SERVER_NAME "ESP32_SPP_Server"
 
 
 void SpeakerApp::checkAndConnectBondedDevice(void) {
@@ -523,8 +529,6 @@ void SpeakerApp::handleA2dpData(const uint8_t *data, uint32_t len)
 void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param)
 {
     // ESP_LOGI(_XSPK_TAG, "AVRCP Controller event: %d", event);
-
-
 
     // Handle AVRCP controller events here (e.g., connection state changes, passthrough responses, etc.)
     switch (event) {
