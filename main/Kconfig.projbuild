@@ -25,7 +25,11 @@ menu "X Speaker Configuration"
         help
             Use this option to set I2S BCK pin number.
 
-
+    config XSMT_PIN
+        int "XSMT pin GPIO Number"
+        default 14
+        help
+            Use this option to set XSMT pin number.
 
 # "LCD configuration"
     config LCD_HOST

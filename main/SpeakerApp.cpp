@@ -143,10 +143,6 @@ esp_err_t SpeakerApp::init()
 
     ESP_LOGI(_XSPK_TAG, "UI created successfully");
 
-    gpio_reset_pin(GPIO_NUM_14);
-    gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_14, 1);
-
     return ESP_OK;
 }
 
@@ -827,6 +823,8 @@ void SpeakerApp::playControlCb(UiMusicPlayer::play_ctrl_param_t ctrl_param)
 
 void SpeakerApp::handlePlayControl(uint16_t evt, UiMusicPlayer::play_ctrl_param_t *ctrl_param)
 {
+    mute(true);
+
     _audio_i2s.clearI2sRingbuffer();
     if(ctrl_param->cmd == UiMusicPlayer::playControlCmd::PLAY) {
         ESP_LOGI(_XSPK_TAG, "Play command received");
@@ -845,6 +843,8 @@ void SpeakerApp::handlePlayControl(uint16_t evt, UiMusicPlayer::play_ctrl_param_
         esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_FORWARD, ESP_AVRC_PT_CMD_STATE_PRESSED);
         esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_FORWARD, ESP_AVRC_PT_CMD_STATE_RELEASED); 
     }
+
+    mute(false);
 }
 
 void SpeakerApp::registerA2dpSinkSeps(void)
@@ -895,4 +895,11 @@ void SpeakerApp::registerA2dpSinkSeps(void)
     mcc_sbc.cie.sbc_info.min_bitpool = 2;
     mcc_sbc.cie.sbc_info.max_bitpool = 250;
     esp_a2d_sink_register_stream_endpoint(1, &mcc_sbc);
+}
+
+void SpeakerApp::mute(bool mute)
+{
+    gpio_reset_pin((gpio_num_t)CONFIG_XSMT_PIN);
+    gpio_set_direction((gpio_num_t)CONFIG_XSMT_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)CONFIG_XSMT_PIN, mute ? 0 : 1);
 }

@@ -84,6 +84,7 @@ private:
     // play control
     void playControlCb(UiMusicPlayer::play_ctrl_param_t ctrl_param);
     void handlePlayControl(uint16_t event, UiMusicPlayer::play_ctrl_param_t *param);
+    void mute(bool mute);
 
     // internal helpers
     void setScanModeConnectable(bool conn, bool discoverable);
