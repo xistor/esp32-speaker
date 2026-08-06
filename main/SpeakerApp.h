@@ -17,6 +17,8 @@
 #include "AudioI2s.h"
 #include "AudioDecoder.h"
 
+#include "ThreadPool.h"
+
 #define APP_DELAY_VALUE 50  // 5ms
 
 /**
@@ -84,7 +86,9 @@ private:
     // play control
     void playControlCb(UiMusicPlayer::play_ctrl_param_t ctrl_param);
     void handlePlayControl(uint16_t event, UiMusicPlayer::play_ctrl_param_t *param);
-    void mute(bool mute);
+    void mute(time_t duration_ms);
+    void mute();
+    void unmute();
 
     // internal helpers
     void setScanModeConnectable(bool conn, bool discoverable);
@@ -123,6 +127,7 @@ private:
     const esp_spp_sec_t _sec_mask = ESP_SPP_SEC_AUTHENTICATE;
     const esp_spp_role_t _role_master = ESP_SPP_ROLE_MASTER;
 
+    ThreadPool _worker_pool{2};
 };
 
 #endif // __SPEAKER_APP_H__

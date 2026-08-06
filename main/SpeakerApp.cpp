@@ -63,6 +63,10 @@ esp_err_t SpeakerApp::init()
 {
     esp_err_t err;
 
+    // configure the GPIO pin for mute control
+    gpio_reset_pin((gpio_num_t)CONFIG_XSMT_PIN);
+    gpio_set_direction((gpio_num_t)CONFIG_XSMT_PIN, GPIO_MODE_OUTPUT);
+
     /* initialize NVS — it is used to store PHY calibration data */
     err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -589,6 +593,7 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
                     ESP_LOGI(_XSPK_TAG, "Playback status changed: 0x%x", param->change_ntf.event_parameter.playback);
                     if( param->change_ntf.event_parameter.playback == ESP_AVRC_PLAYBACK_PLAYING) {
                         _ui_music_player.setPlaying(true);
+                        unmute();
                     } else {
                         _ui_music_player.setPlaying(false);
                     }
@@ -823,7 +828,7 @@ void SpeakerApp::playControlCb(UiMusicPlayer::play_ctrl_param_t ctrl_param)
 
 void SpeakerApp::handlePlayControl(uint16_t evt, UiMusicPlayer::play_ctrl_param_t *ctrl_param)
 {
-    mute(true);
+    mute();
 
     _audio_i2s.clearI2sRingbuffer();
     if(ctrl_param->cmd == UiMusicPlayer::playControlCmd::PLAY) {
@@ -844,7 +849,6 @@ void SpeakerApp::handlePlayControl(uint16_t evt, UiMusicPlayer::play_ctrl_param_
         esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_FORWARD, ESP_AVRC_PT_CMD_STATE_RELEASED); 
     }
 
-    mute(false);
 }
 
 void SpeakerApp::registerA2dpSinkSeps(void)
@@ -897,9 +901,21 @@ void SpeakerApp::registerA2dpSinkSeps(void)
     esp_a2d_sink_register_stream_endpoint(1, &mcc_sbc);
 }
 
-void SpeakerApp::mute(bool mute)
+void SpeakerApp::mute(time_t duration_ms)
 {
-    gpio_reset_pin((gpio_num_t)CONFIG_XSMT_PIN);
-    gpio_set_direction((gpio_num_t)CONFIG_XSMT_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level((gpio_num_t)CONFIG_XSMT_PIN, mute ? 0 : 1);
+    _worker_pool.enqueue([duration_ms]() {
+        gpio_set_level((gpio_num_t)CONFIG_XSMT_PIN, 0); // mute
+        std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
+        gpio_set_level((gpio_num_t)CONFIG_XSMT_PIN, 1); // unmute
+    });
+}
+
+void SpeakerApp::mute()
+{
+    gpio_set_level((gpio_num_t)CONFIG_XSMT_PIN, 0); // mute
+}
+
+void SpeakerApp::unmute()
+{
+    gpio_set_level((gpio_num_t)CONFIG_XSMT_PIN, 1); // unmute
 }
