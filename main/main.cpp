@@ -6,7 +6,7 @@
 
 extern "C" void app_main(void)
 {
-    static SpeakerApp app;
+    SpeakerApp& app = SpeakerApp::instance();
 
 
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);

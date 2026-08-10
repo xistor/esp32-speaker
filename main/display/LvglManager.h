@@ -31,7 +31,6 @@ public:
     }
 
 private:
-    static LvglManager *s_instance;
     static constexpr const char *_LVMGR_TAG = "LvglManager";
     static SemaphoreHandle_t _lvgl_mux;
 
@@ -51,7 +50,7 @@ private:
     esp_timer_handle_t _tick_timer;
     TaskHandle_t _task_handle = nullptr;
 
-    TouchMgr  _touchMgr;
+    TouchMgr  &_touchMgr = TouchMgr::instance();
     LCDMgr _lcdMgr;
 
 };

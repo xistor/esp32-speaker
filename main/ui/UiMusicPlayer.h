@@ -29,8 +29,12 @@ public:
 
     using PlayCtrlCallback = std::function<void(play_ctrl_param_t)>;
 
-    UiMusicPlayer();
-    ~UiMusicPlayer();
+
+    static UiMusicPlayer& instance() {
+        static UiMusicPlayer instance;
+        return instance;
+    }
+
     void create_ui();
     void setTitle(const char *title);
     void setArtist(const char *artist);
@@ -42,7 +46,9 @@ public:
     void regPlayCtrlCallback(PlayCtrlCallback cb);
     void audioVisual(const uint8_t *data, size_t size);
 private:
-    static UiMusicPlayer *s_instance;
+    UiMusicPlayer();
+    ~UiMusicPlayer();
+
     static constexpr const char *_MP_TAG = "UI_MPLAYER";
     static int16_t s_current_fft_bands[CONFIG_UI_SPECTRUM_BANDS_NUMS];
 
@@ -74,8 +80,8 @@ private:
 
     std::atomic<bool> _fft_running{false};
     std::thread _fft_process_thread;
-    float _fft_window[CONFIG_UI_FFT_SAMPLE_SIZE];
-    float _fft_io_buffer[CONFIG_UI_FFT_SAMPLE_SIZE * 2];
+    float *_fft_window = nullptr;
+    float *_fft_io_buffer = nullptr;
     RingbufHandle_t _ringbuf_fft = nullptr; 
     size_t _fft_buf_size = 32 * 1024;
     uint8_t _band_widths[CONFIG_UI_SPECTRUM_BANDS_NUMS];
@@ -95,6 +101,9 @@ private:
     float getRealBatteryVoltage();
     void batteryVoltageReadTask();
     float getBatteryPercentage(float voltage);
+    
+    void handleVisualSwitchEvent(lv_event_t * e);
+
 };
 
 #endif // __UI_MUSIC_PLAYER_H__

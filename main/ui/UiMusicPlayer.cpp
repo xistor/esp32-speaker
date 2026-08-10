@@ -21,13 +21,11 @@ extern "C" {
     LV_FONT_DECLARE(awesome_14);
 }
 
-UiMusicPlayer *UiMusicPlayer::s_instance = nullptr;
 int16_t UiMusicPlayer::s_current_fft_bands[CONFIG_UI_SPECTRUM_BANDS_NUMS];
 
 
 UiMusicPlayer::UiMusicPlayer()
 {
-    s_instance = this;
 
     _ringbuf_fft = xRingbufferCreate(_fft_buf_size, RINGBUF_TYPE_BYTEBUF);
     if (_ringbuf_fft == nullptr) {
@@ -41,6 +39,9 @@ UiMusicPlayer::UiMusicPlayer()
         ESP_LOGE(_MP_TAG, "%s, semaphore create failed", __func__);
         return;
     }
+
+    _fft_window = new float[CONFIG_UI_FFT_SAMPLE_SIZE];
+    _fft_io_buffer = new float[CONFIG_UI_FFT_SAMPLE_SIZE * 2];
 }
 
 UiMusicPlayer::~UiMusicPlayer()
@@ -57,12 +58,23 @@ UiMusicPlayer::~UiMusicPlayer()
         vRingbufferDelete(_ringbuf_fft);
         _ringbuf_fft = nullptr;
     }
+
+    if(_fft_window) {
+        delete[] _fft_window;
+        _fft_window = nullptr;
+    }
+
+    if(_fft_io_buffer) {
+        delete[] _fft_io_buffer;
+        _fft_io_buffer = nullptr;
+    }
+
 }
 
 void UiMusicPlayer::sp_timer_cb(lv_timer_t * timer) {
 
     for(int i = 0; i < CONFIG_UI_SPECTRUM_BANDS_NUMS; i++) {
-            lv_obj_set_height(s_instance->_band_objs[i], (int32_t)s_current_fft_bands[i]);
+            lv_obj_set_height(UiMusicPlayer::instance()._band_objs[i], (int32_t)UiMusicPlayer::instance().s_current_fft_bands[i]);
     }
 
 }
@@ -381,51 +393,47 @@ void UiMusicPlayer::play_ctrl_event_cb(lv_event_t * e)
         const char * txt = lv_label_get_text(label);
         if(strcmp(txt, LV_SYMBOL_PAUSE) == 0) {
             lv_label_set_text(label, LV_SYMBOL_PLAY);
-            if(s_instance) {
-                ctrl_param.cmd = playControlCmd::PAUSE;
-                s_instance->_play_ctrl_cb(ctrl_param);
-            }
-
+            ctrl_param.cmd = playControlCmd::PAUSE;
+            UiMusicPlayer::instance()._play_ctrl_cb(ctrl_param);
         } else {
             lv_label_set_text(label, LV_SYMBOL_PAUSE);
-             if(s_instance) {
-                ctrl_param.cmd = playControlCmd::PLAY;
-                s_instance->_play_ctrl_cb(ctrl_param);
-            }
+            ctrl_param.cmd = playControlCmd::PLAY;
+            UiMusicPlayer::instance()._play_ctrl_cb(ctrl_param);
         }
 
     } else if (id == 2) {
         // ESP_LOGI(_MP_TAG, "prev Button Clicked!");
-        if(s_instance) {
-            ctrl_param.cmd = playControlCmd::PREVIOUS;
-            s_instance->_play_ctrl_cb(ctrl_param);
-        }
+        ctrl_param.cmd = playControlCmd::PREVIOUS;
+        UiMusicPlayer::instance()._play_ctrl_cb(ctrl_param);
     } else if (id == 3) {
         // ESP_LOGI(_MP_TAG, "next Button Clicked!");
-        if(s_instance) {
-            ctrl_param.cmd = playControlCmd::NEXT;
-            s_instance->_play_ctrl_cb(ctrl_param);
-        }
+        ctrl_param.cmd = playControlCmd::NEXT;
+        UiMusicPlayer::instance()._play_ctrl_cb(ctrl_param);
     } else {
         ESP_LOGW(_MP_TAG, "Unknown Button Clicked with id: %d", id);
+    }
+}
+
+void UiMusicPlayer::handleVisualSwitchEvent(lv_event_t * e)
+{
+    ESP_LOGI(_MP_TAG, "Visual switch event triggered");
+
+    if (_visual_type == visualType::ALBUM_ART) {
+        lv_obj_add_flag(_album_art, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(_sp_cont, LV_OBJ_FLAG_HIDDEN);
+        _visual_type = visualType::SPECTRUM;
+    } else if (_visual_type == visualType::SPECTRUM) {
+        lv_obj_clear_flag(_album_art, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(_sp_cont, LV_OBJ_FLAG_HIDDEN);
+        UiMusicPlayer::instance()._visual_type = visualType::ALBUM_ART;
     }
 }
 
 void UiMusicPlayer::visual_switch_event_cb(lv_event_t * e)
 {
     ESP_LOGI(_MP_TAG, "Visual switch event triggered");
-    if(s_instance) {
 
-        if (s_instance->_visual_type == visualType::ALBUM_ART) {
-            lv_obj_add_flag(s_instance->_album_art, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(s_instance->_sp_cont, LV_OBJ_FLAG_HIDDEN);
-            s_instance->_visual_type = visualType::SPECTRUM;
-        } else if (s_instance->_visual_type == visualType::SPECTRUM) {
-            lv_obj_clear_flag(s_instance->_album_art, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(s_instance->_sp_cont, LV_OBJ_FLAG_HIDDEN);
-            s_instance->_visual_type = visualType::ALBUM_ART;
-        }
-    }
+    UiMusicPlayer::instance().handleVisualSwitchEvent(e);
 }
 
 void UiMusicPlayer::audioVisual(const uint8_t *data, size_t size)

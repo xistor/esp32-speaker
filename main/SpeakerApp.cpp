@@ -7,13 +7,10 @@
 #include "jpeg_decoder.h"
 #include "esp_a2dp_api.h"
 
-SpeakerApp *SpeakerApp::s_instance = nullptr;
 
 SpeakerApp::SpeakerApp()
     : _audio_i2s() // default-constructed; configuration later
 {
-    // the class acts as a singleton since callbacks must be static
-    s_instance = this;
 }
 
 SpeakerApp::~SpeakerApp()
@@ -59,26 +56,11 @@ void SpeakerApp::a2dDeinit() {
 
 }
 
-esp_err_t SpeakerApp::init()
-{
+esp_err_t SpeakerApp::bluetoothInit() {
+
     esp_err_t err;
-
-    // configure the GPIO pin for mute control
-    gpio_reset_pin((gpio_num_t)CONFIG_XSMT_PIN);
-    gpio_set_direction((gpio_num_t)CONFIG_XSMT_PIN, GPIO_MODE_OUTPUT);
-
-    /* initialize NVS — it is used to store PHY calibration data */
-    err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(err);
-
     /* release the controller memory for Bluetooth Low Energy. */
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
-
-    _msg_handler_thread = std::thread(&SpeakerApp::msgHandler, this);
 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     if ((err = esp_bt_controller_init(&bt_cfg)) != ESP_OK) {
@@ -116,12 +98,6 @@ esp_err_t SpeakerApp::init()
 
     a2dInit();
 
-    esp_err_t lv_err = LvglManager::instance().init(CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
-    if (lv_err != ESP_OK) {
-        ESP_LOGE(_XSPK_TAG, "LVGL init failed: %s", esp_err_to_name(lv_err));
-        return lv_err;
-    }
-
     esp_spp_register_callback(sppCallback);
     esp_spp_cfg_t spp_cfg = {
         .mode = ESP_SPP_MODE_CB,
@@ -135,11 +111,42 @@ esp_err_t SpeakerApp::init()
     /* set discoverable and connectable mode, wait to be connected */
     setScanModeConnectable(true, true);
 
+    return ESP_OK;
+}
+
+void SpeakerApp::bluetoothDeinit() {
+    a2dDeinit();
+}
+
+esp_err_t SpeakerApp::init()
+{
+    esp_err_t err;
+
+    // configure the GPIO pin for mute control
+    gpio_reset_pin((gpio_num_t)CONFIG_XSMT_PIN);
+    gpio_set_direction((gpio_num_t)CONFIG_XSMT_PIN, GPIO_MODE_OUTPUT);
+
+    /* initialize NVS — it is used to store PHY calibration data */
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+
+    _msg_handler_thread = std::thread(&SpeakerApp::msgHandler, this);
+
+    bluetoothInit();
+
+    esp_err_t lv_err = LvglManager::instance().init(CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
+    if (lv_err != ESP_OK) {
+        ESP_LOGE(_XSPK_TAG, "LVGL init failed: %s", esp_err_to_name(lv_err));
+        return lv_err;
+    }
 
     while (!LvglManager::instance().isInitialized()) {
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
-
 
     _ui_music_player.create_ui();
 
@@ -165,36 +172,31 @@ void SpeakerApp::configureI2s(const i2s_chan_config_t &chan_cfg,
 /* static callbacks */
 void SpeakerApp::a2dCallback(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param)
 {
-    if (s_instance){
-        s_instance->msgDispatch([event](uint16_t evt, void *p) {
-            s_instance->handleA2dpEvent(event, (esp_a2d_cb_param_t *)p);
-        }, event, param, sizeof(esp_a2d_cb_param_t));
-    }
+   
+    SpeakerApp::instance().msgDispatch([event](uint16_t evt, void *p) {
+        SpeakerApp::instance().handleA2dpEvent(event, (esp_a2d_cb_param_t *)p);
+    }, event, param, sizeof(esp_a2d_cb_param_t));
+
 
 }
 
 void SpeakerApp::gapCallback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 {
-    if (s_instance){
-        s_instance->msgDispatch([event](uint16_t evt, void *p) {
-            s_instance->handleGapEvent(event, (esp_bt_gap_cb_param_t *)p);
-        }, event, param, sizeof(esp_bt_gap_cb_param_t));
-    }
+    SpeakerApp::instance().msgDispatch([event](uint16_t evt, void *p) {
+        SpeakerApp::instance().handleGapEvent(event, (esp_bt_gap_cb_param_t *)p);
+    }, event, param, sizeof(esp_bt_gap_cb_param_t));
+
 }
 
 void SpeakerApp::sppCallback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 {
-    if (s_instance){
-        s_instance->msgDispatch([event](uint16_t evt, void *p) {
-            s_instance->handleSppEvent(event, (esp_spp_cb_param_t *)p);
-        }, event, param, sizeof(esp_spp_cb_param_t));
-    }
+    SpeakerApp::instance().msgDispatch([event](uint16_t evt, void *p) {
+        SpeakerApp::instance().handleSppEvent(event, (esp_spp_cb_param_t *)p);
+    }, event, param, sizeof(esp_spp_cb_param_t));
 }
 void SpeakerApp::a2dDataCallback(const uint8_t *data, uint32_t len)
 {
-    if (s_instance) {
-        s_instance->handleA2dpData(data, len);
-    }
+    SpeakerApp::instance().handleA2dpData(data, len);
 }
 
 #ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
@@ -208,9 +210,7 @@ void SpeakerApp::a2dAudioDataCallback(esp_a2d_conn_hdl_t conn_hdl, esp_a2d_audio
         return;
     }
 
-    if(s_instance != nullptr) {
-        s_instance->_audio_decoder.pushAudioData(audio_buf);
-    }
+    SpeakerApp::instance()._audio_decoder.pushAudioData(audio_buf);
 
 }
 
@@ -220,20 +220,20 @@ void SpeakerApp::rcCtrlCallback(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_par
 {
     switch(event) {
         case ESP_AVRC_CT_METADATA_RSP_EVT:
-            s_instance->msgDispatch([event](uint16_t evt, void *p) {
-                        s_instance->handleRcCtrlEvent(event, (esp_avrc_ct_cb_param_t *)p);
+            SpeakerApp::instance().msgDispatch([event](uint16_t evt, void *p) {
+                        SpeakerApp::instance().handleRcCtrlEvent(event, (esp_avrc_ct_cb_param_t *)p);
                     }, event, param, sizeof(esp_avrc_ct_cb_param_t), SpeakerApp::avrcCommonnCopyMetaData, SpeakerApp::avrcCommonFreeMetaData);
             break;
         case ESP_AVRC_CT_COVER_ART_DATA_EVT:
 
             if (param->cover_art_data.status == ESP_BT_STATUS_SUCCESS) {
-                s_instance->saveCoverImageData(param->cover_art_data.p_data, param->cover_art_data.data_len);
+                SpeakerApp::instance().saveCoverImageData(param->cover_art_data.p_data, param->cover_art_data.data_len);
             } else {
                 ESP_LOGW(_XSPK_TAG, "Cover Art Client get operation failed");
                 break;
             }
-            s_instance->msgDispatch([event](uint16_t evt, void *p) {
-                        s_instance->handleRcCtrlEvent(event, (esp_avrc_ct_cb_param_t *)p);
+            SpeakerApp::instance().msgDispatch([event](uint16_t evt, void *p) {
+                        SpeakerApp::instance().handleRcCtrlEvent(event, (esp_avrc_ct_cb_param_t *)p);
                     }, event, param, sizeof(esp_avrc_ct_cb_param_t));
             break;
         case ESP_AVRC_CT_CONNECTION_STATE_EVT:
@@ -243,8 +243,8 @@ void SpeakerApp::rcCtrlCallback(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_par
         case ESP_AVRC_CT_GET_RN_CAPABILITIES_RSP_EVT:
         case ESP_AVRC_CT_COVER_ART_STATE_EVT:
         case ESP_AVRC_CT_PROF_STATE_EVT:
-            s_instance->msgDispatch([event](uint16_t evt, void *p) {
-                        s_instance->handleRcCtrlEvent(event, (esp_avrc_ct_cb_param_t *)p);
+            SpeakerApp::instance().msgDispatch([event](uint16_t evt, void *p) {
+                        SpeakerApp::instance().handleRcCtrlEvent(event, (esp_avrc_ct_cb_param_t *)p);
                     }, event, param, sizeof(esp_avrc_ct_cb_param_t));
             break;
         default:
@@ -255,11 +255,11 @@ void SpeakerApp::rcCtrlCallback(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_par
 
 void SpeakerApp::rcTgCallback(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param)
 {
-    if (s_instance){
-        s_instance->msgDispatch([event](uint16_t evt, void *p) {
-            s_instance->handleRcTgEvent(event, (esp_avrc_tg_cb_param_t *)p);
-        }, event, param, sizeof(esp_avrc_tg_cb_param_t));
-    }
+
+    SpeakerApp::instance().msgDispatch([event](uint16_t evt, void *p) {
+        SpeakerApp::instance().handleRcTgEvent(event, (esp_avrc_tg_cb_param_t *)p);
+    }, event, param, sizeof(esp_avrc_tg_cb_param_t));
+
 }
 
 /* instance methods */
@@ -286,7 +286,7 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED) {
             ESP_LOGI(_XSPK_TAG, "A2DP connected, set scan mode to non-connectable and non-discoverable, enable I2S channel");
             setScanModeConnectable(false, false);
-            savePeerAddress(param->conn_stat.remote_bda);
+            saveToNvs("bt_storage", "last_mac", param->conn_stat.remote_bda, sizeof(esp_bd_addr_t));
 
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
             ESP_LOGI(_XSPK_TAG, "A2DP disconnected, set scan mode to connectable and discoverable, disable I2S channel");
@@ -431,22 +431,22 @@ void SpeakerApp::handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param
     }
 }
 
-void SpeakerApp::savePeerAddress(const esp_bd_addr_t bda) {
+void SpeakerApp::saveToNvs(const char *ns, const char *key, const uint8_t *data, size_t len) {
     nvs_handle_t my_handle;
-    esp_err_t err = nvs_open("bt_storage", NVS_READWRITE, &my_handle);
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &my_handle);
     if (err == ESP_OK) {
-        nvs_set_blob(my_handle, "last_mac", bda, sizeof(esp_bd_addr_t));
+        nvs_set_blob(my_handle, key, data, len);
         nvs_commit(my_handle);
         nvs_close(my_handle);
     }
 }
 
-bool SpeakerApp::getSavedPeerAddress(esp_bd_addr_t out_bda) {
+bool SpeakerApp::getFromNvs(const char *ns, const char *key, uint8_t *data, size_t len) {
     nvs_handle_t my_handle;
-    esp_err_t err = nvs_open("bt_storage", NVS_READONLY, &my_handle);
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &my_handle);
     if (err == ESP_OK) {
-        size_t required_size = sizeof(esp_bd_addr_t);
-        err = nvs_get_blob(my_handle, "last_mac", out_bda, &required_size);
+
+        err = nvs_get_blob(my_handle, key, data, &len);
         nvs_close(my_handle);
         if (err == ESP_OK) {
             return true;
@@ -464,7 +464,7 @@ void SpeakerApp::checkAndConnectBondedDevice(void) {
 
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
 
-    if (getSavedPeerAddress(_saved_peer_addr)) {
+    if (getFromNvs("bt_storage", "last_mac", _saved_peer_addr, sizeof(esp_bd_addr_t))) {
         ESP_LOGI(_XSPK_TAG, "Previously bonded device found, attempting to proactively connect...");
         esp_a2d_sink_connect(_saved_peer_addr);
 
@@ -693,34 +693,33 @@ void SpeakerApp::handleRcTgEvent(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_pa
 
 bool SpeakerApp::msgDispatch(BtAppCallback callback, uint16_t event, void *p_params, int param_len, BtAppCopyCallback copy_callback, DeepFreeCallback free_callback)
 {
-    if (s_instance) {
-        bt_app_msg_t msg;
-        memset(&msg, 0, sizeof(msg));
+    bt_app_msg_t msg;
+    memset(&msg, 0, sizeof(msg));
 
-        msg.event = event;
-        msg.callback = callback;
+    msg.event = event;
+    msg.callback = callback;
 
 
-        if (param_len == 0) {
-            s_instance->pushBtMsg(msg);
-            return true;
-        } else if (p_params && param_len > 0) {
-            if ((msg.param = malloc(param_len)) != NULL) {
-                memcpy(msg.param, p_params, param_len);
-                if(copy_callback)
-                {
-                    copy_callback(msg.param, p_params, param_len);
-                }
-                
-                if(free_callback)
-                {
-                    msg.free_callback = free_callback;
-                }
-                s_instance->pushBtMsg(msg);
-                return true;
+    if (param_len == 0) {
+        SpeakerApp::instance().pushBtMsg(msg);
+        return true;
+    } else if (p_params && param_len > 0) {
+        if ((msg.param = malloc(param_len)) != NULL) {
+            memcpy(msg.param, p_params, param_len);
+            if(copy_callback)
+            {
+                copy_callback(msg.param, p_params, param_len);
             }
+            
+            if(free_callback)
+            {
+                msg.free_callback = free_callback;
+            }
+            SpeakerApp::instance().pushBtMsg(msg);
+            return true;
         }
     }
+
     return false;
 
 }
@@ -818,11 +817,9 @@ void SpeakerApp::playControlCb(UiMusicPlayer::play_ctrl_param_t ctrl_param)
 {
     // ESP_LOGI(_XSPK_TAG, "Prev/Next control callback, ctrl cmd: %d\n", ctrl_param.cmd );
 
-    if (s_instance){
-        s_instance->msgDispatch([ctrl_param](uint16_t evt, void *p) {
-            s_instance->handlePlayControl(evt, (UiMusicPlayer::play_ctrl_param_t *)p);
-        }, 0, &ctrl_param, sizeof(UiMusicPlayer::play_ctrl_param_t));
-    }
+    SpeakerApp::instance().msgDispatch([ctrl_param](uint16_t evt, void *p) {
+        SpeakerApp::instance().handlePlayControl(evt, (UiMusicPlayer::play_ctrl_param_t *)p);
+    }, 0, &ctrl_param, sizeof(UiMusicPlayer::play_ctrl_param_t));
 
 }
 

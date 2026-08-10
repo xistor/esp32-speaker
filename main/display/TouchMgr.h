@@ -12,13 +12,19 @@
 
 class TouchMgr {
 public:
-    TouchMgr();
+    static TouchMgr &instance();
+
+    TouchMgr(const TouchMgr&) = delete;
+    TouchMgr& operator=(const TouchMgr&) = delete;
+
     void init();
     void deinit();
     static void touchReadCallback(lv_indev_t * drv, lv_indev_data_t * data);
 
 private:
-    static TouchMgr *s_instance;
+    TouchMgr();
+    ~TouchMgr();
+
     static constexpr const char *_TAG_TOUCH = "TouchMgr";
     static void touchIntCallback(esp_lcd_touch_handle_t tp);
 

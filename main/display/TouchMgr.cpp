@@ -4,13 +4,20 @@
 
 static const char *TAG = "TouchMgr";
 
-TouchMgr *TouchMgr::s_instance = nullptr;
 
 TouchMgr::TouchMgr() {
     _touch_mux = xSemaphoreCreateBinary();
     assert(_touch_mux != nullptr);
 
-    s_instance = this;
+}
+
+TouchMgr::~TouchMgr() {
+    deinit();
+}
+
+TouchMgr &TouchMgr::instance() {
+    static TouchMgr instance;
+    return instance;
 }
 
 void TouchMgr::init() {
@@ -119,9 +126,8 @@ void TouchMgr::deinit() {
 
 
 void TouchMgr::touchIntCallback(esp_lcd_touch_handle_t tp) {
-    if (s_instance) {
-        s_instance->handleTouchInt(tp);
-    }
+    TouchMgr::instance().handleTouchInt(tp);
+
 }
 
 void TouchMgr::handleTouchInt(esp_lcd_touch_handle_t tp) {
@@ -135,9 +141,8 @@ void TouchMgr::handleTouchInt(esp_lcd_touch_handle_t tp) {
 }
 
 void TouchMgr::touchReadCallback(lv_indev_t * drv, lv_indev_data_t * data) {
-    if (s_instance) {
-        s_instance->handleTouchRead(data);
-    }
+    TouchMgr::instance().handleTouchRead(data);
+
     // ESP_LOGI(TAG, "Touch read: x=%d, y=%d, state=%s", data->point.x, data->point.y,
     //          (data->state == LV_INDEV_STATE_PRESSED) ? "PRESSED" : "RELEASED");
 }

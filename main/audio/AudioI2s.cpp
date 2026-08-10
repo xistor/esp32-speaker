@@ -186,6 +186,7 @@ size_t AudioI2s::sendToI2s(const uint8_t *data, size_t size)
             i2s_channel_enable(_tx_chan);
 
             _ringbuffer_mode = RingbufferMode::PROCESSING;
+            fail_count = 0;
         }
         return 0;
     }

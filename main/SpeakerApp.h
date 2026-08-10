@@ -19,7 +19,10 @@
 
 #include "ThreadPool.h"
 
+
 #define APP_DELAY_VALUE 50  // 5ms
+
+
 
 /**
  * 
@@ -30,6 +33,8 @@
  */
 class SpeakerApp {
 public:
+    SpeakerApp(const SpeakerApp&) = delete;
+    SpeakerApp& operator=(const SpeakerApp&) = delete;
 
     using BtAppCallback = std::function<void(uint16_t event, void *param)>;
     using BtAppCopyCallback = std::function<void(void *p_dest, void *p_src, int len)>;
@@ -42,8 +47,12 @@ public:
         DeepFreeCallback free_callback;
     } bt_app_msg_t;
 
-    SpeakerApp();
-    ~SpeakerApp();
+
+    static SpeakerApp& instance() {
+        static SpeakerApp instance;
+        return instance;
+
+    }
 
     /**
      * Initialize Bluetooth stack, register callbacks, etc.
@@ -58,7 +67,7 @@ public:
                       const i2s_std_config_t &std_cfg);
 
 private:
-    static SpeakerApp *s_instance;
+
     static constexpr const char *_XSPK_TAG = "X_SPEAKER";
 
     // Bluetooth callbacks have to be static, so they route to the
@@ -73,6 +82,9 @@ private:
     static void avrcCommonnCopyMetaData(void *p_dest, void *p_src, int len);
     static void avrcCommonFreeMetaData(void *ptr);
     static uint8_t allocTransactionLabel();
+
+    SpeakerApp();
+    ~SpeakerApp();
 
     void registerA2dpSinkSeps(void);
 
@@ -105,15 +117,18 @@ private:
     void a2dInit();
     void a2dDeinit();
 
-    void savePeerAddress(const esp_bd_addr_t addr);
-    bool getSavedPeerAddress(esp_bd_addr_t addr);
+    esp_err_t bluetoothInit();
+    void bluetoothDeinit();
+
+    void saveToNvs(const char *ns, const char *key, const uint8_t *data, size_t len);
+    bool getFromNvs(const char *ns, const char *key, uint8_t *data, size_t len);
 
     const char *_device_name = CONFIG_SPEAKER_DEVICE_NAME;
     AudioI2s _audio_i2s;
 #ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
     AudioDecoder _audio_decoder;
 #endif
-    UiMusicPlayer _ui_music_player;
+    UiMusicPlayer& _ui_music_player = UiMusicPlayer::instance();
     uint8_t _cover_image_handler[7];
     uint8_t *_cover_image_data = nullptr;
     uint32_t _cover_image_size = 0;
@@ -128,6 +143,8 @@ private:
     const esp_spp_role_t _role_master = ESP_SPP_ROLE_MASTER;
 
     ThreadPool _worker_pool{2};
+
+
 };
 
 #endif // __SPEAKER_APP_H__
