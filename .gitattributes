@@ -1,0 +1,24 @@
+# Force GitHub Linguist to detect C++ as the primary language for this ESP-IDF project.
+
+# Main component: treat everything under main/ as C++ source.
+# This overrides linguist's heuristics for .c files and ensures C++ wins on the language bar.
+main/** linguist-language=C++
+
+# Explicit overrides (defensive — in case some files match glob order differently)
+*.cpp linguist-language=C++
+*.hpp linguist-language=C++
+*.h linguist-language=C++
+*.cc linguist-language=C++
+*.cxx linguist-language=C++
+*.c   linguist-language=C
+
+# ESP-IDF build output: vendored so it doesn't pollute language statistics.
+build/**        linguist-vendored
+managed_components/** linguist-vendored
+
+# sdkconfig is an ESP-IDF-generated Kconfig dump; not interesting to the language bar.
+sdkconfig       linguist-vendored
+sdkconfig.old   linguist-vendored
+
+# Generated documentation
+README_EN.md    linguist-documentation

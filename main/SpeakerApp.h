@@ -19,6 +19,8 @@
 
 #include "ThreadPool.h"
 
+#include "NvsHelper.h"
+
 #include "WifiMgr.h"
 
 #define APP_DELAY_VALUE 50  // 5ms
@@ -125,9 +127,6 @@ private:
 
     esp_err_t bluetoothInit();
     void bluetoothDeinit();
-
-    void saveToNvs(const char *ns, const char *key, const uint8_t *data, size_t len);
-    bool getFromNvs(const char *ns, const char *key, uint8_t *data, size_t len);
 
     const char *_device_name = CONFIG_SPEAKER_DEVICE_NAME;
     AudioI2s _audio_i2s;

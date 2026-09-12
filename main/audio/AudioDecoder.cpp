@@ -9,7 +9,7 @@ AudioDecoder::AudioDecoder()
     _running.store(true);
 
     esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
-    cfg.thread_name = "i2STask";
+    cfg.thread_name = "AudioDecodeTask";
     cfg.pin_to_core = 0; 
     cfg.prio = 15; 
 

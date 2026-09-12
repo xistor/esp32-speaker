@@ -2,6 +2,7 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "display/LvglManager.h"
+#include "NvsHelper.h"
 #include <cstring>
 #include "esp_spiffs.h"
 #include "jpeg_decoder.h"
@@ -137,7 +138,7 @@ esp_err_t SpeakerApp::init()
 
     _msg_handler_thread = std::thread(&SpeakerApp::msgHandler, this);
 
-    getFromNvs("common_config", "protocol", (uint8_t *)&protocol_type, sizeof(ProtocolType));
+    NvsHelper::load("common_config", "audio_protocol", (uint8_t *)&protocol_type, sizeof(ProtocolType));
 
     if( protocol_type == ProtocolType::PROTOCOL_A2DP) {
         ESP_LOGI(_XSPK_TAG, "Initializing Bluetooth stack for A2DP");
@@ -297,7 +298,7 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED) {
             ESP_LOGI(_XSPK_TAG, "A2DP connected, set scan mode to non-connectable and non-discoverable, enable I2S channel");
             setScanModeConnectable(false, false);
-            saveToNvs("bt_storage", "last_mac", param->conn_stat.remote_bda, sizeof(esp_bd_addr_t));
+            NvsHelper::save("bt_storage", "last_mac", param->conn_stat.remote_bda, sizeof(esp_bd_addr_t));
 
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
             ESP_LOGI(_XSPK_TAG, "A2DP disconnected, set scan mode to connectable and discoverable, disable I2S channel");
@@ -321,7 +322,7 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
 
 #ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
         _audio_decoder.applyMcc(&param->audio_cfg.mcc);
-#else
+#endif
         if (param->audio_cfg.mcc.type == ESP_A2D_MCT_SBC) {
             int sample_rate = 16000;
             int ch_count = 2;
@@ -350,8 +351,55 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
                     param->audio_cfg.mcc.cie.sbc_info.min_bitpool,
                     param->audio_cfg.mcc.cie.sbc_info.max_bitpool);
             ESP_LOGI(_XSPK_TAG, "Audio player configured, sample rate: %d", sample_rate);
+        } else if (param->audio_cfg.mcc.type == ESP_A2D_MCT_M24) {
+            int sample_rate = 16000;
+            int ch_count = 2;
+            if (param->audio_cfg.mcc.cie.m24_info.samp_freq2 & ESP_A2D_M24_CIE_SF2_96K) {
+                sample_rate = 96000;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq2 & ESP_A2D_M24_CIE_SF2_88K) {
+                sample_rate = 88200;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq2 & ESP_A2D_M24_CIE_SF2_64K) {
+                sample_rate = 64000;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq2 & ESP_A2D_M24_CIE_SF2_48K) {
+                sample_rate = 48000;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq1 & ESP_A2D_M24_CIE_SF1_44K) {
+                sample_rate = 44100;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq1 & ESP_A2D_M24_CIE_SF1_32K) {
+                sample_rate = 32000;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq1 & ESP_A2D_M24_CIE_SF1_24K) {
+                sample_rate = 24000;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq1 & ESP_A2D_M24_CIE_SF1_22K) {
+                sample_rate = 22050;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq1 & ESP_A2D_M24_CIE_SF1_16K) {
+                sample_rate = 16000;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq1 & ESP_A2D_M24_CIE_SF1_12K) {
+                sample_rate = 12000;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq1 & ESP_A2D_M24_CIE_SF1_11K) {
+                sample_rate = 11025;
+            } else if (param->audio_cfg.mcc.cie.m24_info.samp_freq1 & ESP_A2D_M24_CIE_SF1_8K) {
+                sample_rate = 8000;
+            }
+
+            if (param->audio_cfg.mcc.cie.m24_info.ch & ESP_A2D_M24_CIE_CH_1) {
+                ch_count = 1;
+            }
+            i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG((uint32_t)sample_rate);
+            i2s_std_slot_config_t slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                                            (i2s_slot_mode_t)ch_count);
+            _audio_i2s.reConfigI2s(clk_cfg, slot_cfg);
+            ESP_LOGI(_XSPK_TAG, "Configure audio player: 0x%x-0x%x-0x%x-0x%x-0x%x-0x%x-0x%x-0x%x-0x%x",
+                    param->audio_cfg.mcc.cie.m24_info.drc,
+                    param->audio_cfg.mcc.cie.m24_info.obj_type,
+                    param->audio_cfg.mcc.cie.m24_info.samp_freq1,
+                    param->audio_cfg.mcc.cie.m24_info.samp_freq2,
+                    param->audio_cfg.mcc.cie.m24_info.ch,
+                    param->audio_cfg.mcc.cie.m24_info.vbr,
+                    param->audio_cfg.mcc.cie.m24_info.br1,
+                    param->audio_cfg.mcc.cie.m24_info.br2,
+                    param->audio_cfg.mcc.cie.m24_info.br3);
+            ESP_LOGI(_XSPK_TAG, "Audio player configured, sample rate: %d", sample_rate);
         }
-#endif
+
 
         break;
     case ESP_A2D_PROF_STATE_EVT:
@@ -442,31 +490,6 @@ void SpeakerApp::handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param
     }
 }
 
-void SpeakerApp::saveToNvs(const char *ns, const char *key, const uint8_t *data, size_t len) {
-    nvs_handle_t my_handle;
-    esp_err_t err = nvs_open(ns, NVS_READWRITE, &my_handle);
-    if (err == ESP_OK) {
-        nvs_set_blob(my_handle, key, data, len);
-        nvs_commit(my_handle);
-        nvs_close(my_handle);
-    }
-}
-
-bool SpeakerApp::getFromNvs(const char *ns, const char *key, uint8_t *data, size_t len) {
-    nvs_handle_t my_handle;
-    esp_err_t err = nvs_open(ns, NVS_READONLY, &my_handle);
-    if (err == ESP_OK) {
-
-        err = nvs_get_blob(my_handle, key, data, &len);
-        nvs_close(my_handle);
-        if (err == ESP_OK) {
-            return true;
-        }
-    }
-    return false;
-}
-
-
 #define SPP_SERVER_NAME "ESP32_SPP_Server"
 
 
@@ -475,7 +498,7 @@ void SpeakerApp::checkAndConnectBondedDevice(void) {
 
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
 
-    if (getFromNvs("bt_storage", "last_mac", _saved_peer_addr, sizeof(esp_bd_addr_t))) {
+    if (NvsHelper::load("bt_storage", "last_mac", _saved_peer_addr, sizeof(esp_bd_addr_t))) {
         ESP_LOGI(_XSPK_TAG, "Previously bonded device found, attempting to proactively connect...");
         esp_a2d_sink_connect(_saved_peer_addr);
 

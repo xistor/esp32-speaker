@@ -59,7 +59,7 @@ private:
     static void play_ctrl_event_cb(lv_event_t * e);
     static void visual_switch_event_cb(lv_event_t * e);
     static void sp_timer_cb(lv_timer_t * timer);
-    static void setting_event_cb(lv_event_t * e);
+    static void statusBarGestureCb(lv_event_t * e);
 
     lv_obj_t *_album_art = nullptr;
     lv_obj_t *_title = nullptr;
@@ -71,7 +71,6 @@ private:
     lv_obj_t *_band_objs[CONFIG_UI_SPECTRUM_BANDS_NUMS];
     lv_obj_t *_battery_area = nullptr;
     lv_obj_t *_battery_bar = nullptr;
-    lv_obj_t *_setting_icon = nullptr;
     lv_obj_t * _main_page = nullptr;
 
 

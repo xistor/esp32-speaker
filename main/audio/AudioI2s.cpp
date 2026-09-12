@@ -125,8 +125,12 @@ void AudioI2s::enableI2s(void)
 
 void AudioI2s::reConfigI2s(const i2s_std_clk_config_t &clk_cfg, const i2s_std_slot_config_t &slot_cfg)
 {
+    ESP_ERROR_CHECK(i2s_channel_disable(_tx_chan));
+
     i2s_channel_reconfig_std_clock(_tx_chan, &clk_cfg);
     i2s_channel_reconfig_std_slot(_tx_chan, &slot_cfg);
+
+    ESP_ERROR_CHECK(i2s_channel_enable(_tx_chan));
 
     ESP_LOGI(X_AUDIO_I2S_TAG, "AudioI2s::reconfigI2s done");
 }
@@ -175,17 +179,8 @@ size_t AudioI2s::sendToI2s(const uint8_t *data, size_t size)
 
         if(fail_count > 10) {
             ESP_LOGE(X_AUDIO_I2S_TAG, "ringbuffer is full, drop too many packets! reset");
-            size_t dummy_size = 0;
-            void* dummy_item = NULL;
-            while ((dummy_item = xRingbufferReceive(_ringbuf_i2s, &dummy_size, 0)) != NULL) {
-                vRingbufferReturnItem(_ringbuf_i2s, dummy_item);
-            }
-
-            i2s_channel_disable(_tx_chan);
-            esp_rom_delay_us(100);
-            i2s_channel_enable(_tx_chan);
-
-            _ringbuffer_mode = RingbufferMode::PROCESSING;
+            clearI2sRingbuffer();
+            _ringbuffer_mode = RingbufferMode::PREFETCHING;
             fail_count = 0;
         }
         return 0;

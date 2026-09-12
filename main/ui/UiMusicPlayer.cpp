@@ -79,13 +79,18 @@ void UiMusicPlayer::sp_timer_cb(lv_timer_t * timer) {
 
 }
 
-void UiMusicPlayer::setting_event_cb(lv_event_t * e)
+void UiMusicPlayer::statusBarGestureCb(lv_event_t * e)
 {
-    ESP_LOGI(_MP_TAG, "Setting button clicked!");
-    // Handle the setting button click event here
+    ESP_LOGI(_MP_TAG, "Status bar gesture detected");
 
-    UiMusicPlayer::instance()._ui_setting.createSettingPage();
+    lv_indev_t * indev = lv_indev_active();
+    if(indev == nullptr) return;
 
+    // Only react to a swipe (drag) downwards started on the status bar
+    if(lv_indev_get_gesture_dir(indev) == LV_DIR_BOTTOM) {
+        ESP_LOGI(_MP_TAG, "Swipe down on status bar, opening settings page");
+        UiMusicPlayer::instance()._ui_setting.createSettingPage();
+    }
 }
 
 void UiMusicPlayer::init()
@@ -111,6 +116,15 @@ void UiMusicPlayer::main_page()
     lv_obj_remove_flag(_main_page, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_center(_main_page);
     
+    // 1.0 Top status bar gesture zone - swipe down to open the settings page.
+    //     Transparent, placed underneath the battery/setting icons so they stay tappable.
+    lv_obj_t * status_bar = lv_obj_create(_main_page);
+    lv_obj_remove_style_all(status_bar);
+    lv_obj_set_size(status_bar, CONFIG_LCD_H_RES, 30);
+    lv_obj_align(status_bar, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_remove_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(status_bar, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(status_bar, statusBarGestureCb, LV_EVENT_GESTURE, NULL);
 
     // 1.1 battery
     _battery_area = lv_obj_create(_main_page);
@@ -152,14 +166,6 @@ void UiMusicPlayer::main_page()
     lv_obj_set_style_bg_opa(_battery_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(_battery_bar, 1, 0);
 
-    // setting
-    _setting_icon = lv_label_create(_main_page);
-    lv_label_set_text(_setting_icon, LV_SYMBOL_SETTINGS);
-    lv_obj_set_size(_setting_icon, 24, 24);
-    lv_obj_align(_setting_icon, LV_ALIGN_TOP_RIGHT, -10, 5);
-    lv_obj_set_style_text_color(_setting_icon, lv_color_white(), 0);
-    lv_obj_add_flag(_setting_icon, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(_setting_icon, setting_event_cb, LV_EVENT_CLICKED, NULL);
 
     // 2. Album Art - Now at the TOP
      _album_art = lv_image_create(_main_page);
