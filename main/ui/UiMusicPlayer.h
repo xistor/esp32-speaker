@@ -7,6 +7,7 @@
 #include "freertos/ringbuf.h"
 #include "freertos/semphr.h"
 #include "esp_adc/adc_oneshot.h"
+#include "UiSetting.h"
 
 class UiMusicPlayer {
 public:
@@ -35,7 +36,9 @@ public:
         return instance;
     }
 
-    void create_ui();
+    void init();
+    void main_page();
+
     void setTitle(const char *title);
     void setArtist(const char *artist);
     void setPlaying(bool playing);
@@ -45,6 +48,7 @@ public:
 
     void regPlayCtrlCallback(PlayCtrlCallback cb);
     void audioVisual(const uint8_t *data, size_t size);
+
 private:
     UiMusicPlayer();
     ~UiMusicPlayer();
@@ -55,6 +59,7 @@ private:
     static void play_ctrl_event_cb(lv_event_t * e);
     static void visual_switch_event_cb(lv_event_t * e);
     static void sp_timer_cb(lv_timer_t * timer);
+    static void setting_event_cb(lv_event_t * e);
 
     lv_obj_t *_album_art = nullptr;
     lv_obj_t *_title = nullptr;
@@ -65,8 +70,10 @@ private:
     lv_obj_t *_sp_cont = nullptr;
     lv_obj_t *_band_objs[CONFIG_UI_SPECTRUM_BANDS_NUMS];
     lv_obj_t *_battery_area = nullptr;
-    lv_obj_t *_battery_text = nullptr;
     lv_obj_t *_battery_bar = nullptr;
+    lv_obj_t *_setting_icon = nullptr;
+    lv_obj_t * _main_page = nullptr;
+
 
     lv_font_t *_font = nullptr;
     lv_anim_t _rotate_anim;
@@ -104,6 +111,7 @@ private:
     
     void handleVisualSwitchEvent(lv_event_t * e);
 
+    UiSetting &_ui_setting = UiSetting::instance();
 };
 
 #endif // __UI_MUSIC_PLAYER_H__

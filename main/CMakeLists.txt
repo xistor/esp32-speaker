@@ -5,9 +5,11 @@ file(GLOB_RECURSE SOURCES
     "fonts/*.c"
     "ui/*.cpp"
     "ui/*.c"
+    "common/*.cpp"
+    "network/*.cpp"
 )
 idf_component_register(SRCS ${SOURCES}
-                    INCLUDE_DIRS "." "audio" "display" "common" "ui")
+                    INCLUDE_DIRS "." "audio" "display" "common" "ui" "network")
 
 target_compile_options(${COMPONENT_LIB} PRIVATE 
                     $<$<COMPILE_LANGUAGE:CXX>:

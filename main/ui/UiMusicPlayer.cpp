@@ -79,7 +79,22 @@ void UiMusicPlayer::sp_timer_cb(lv_timer_t * timer) {
 
 }
 
-void UiMusicPlayer::create_ui()
+void UiMusicPlayer::setting_event_cb(lv_event_t * e)
+{
+    ESP_LOGI(_MP_TAG, "Setting button clicked!");
+    // Handle the setting button click event here
+
+    UiMusicPlayer::instance()._ui_setting.createSettingPage();
+
+}
+
+void UiMusicPlayer::init()
+{
+
+    main_page();
+}
+
+void UiMusicPlayer::main_page()
 {
 
     if(LvglManager::lvgl_lock(_lock_timeout_ms) == false) {
@@ -88,24 +103,25 @@ void UiMusicPlayer::create_ui()
     }
 
     // 1. Background Container
-    lv_obj_t * main_cont = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(main_cont, CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
-    lv_obj_set_style_bg_color(main_cont, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_border_width(main_cont, 0, 0);
-    lv_obj_set_style_radius(main_cont, 0, 0);
-    lv_obj_remove_flag(main_cont, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_center(main_cont);
+    _main_page = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(_main_page, CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
+    lv_obj_set_style_bg_color(_main_page, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_border_width(_main_page, 0, 0);
+    lv_obj_set_style_radius(_main_page, 0, 0);
+    lv_obj_remove_flag(_main_page, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_center(_main_page);
+    
 
     // 1.1 battery
-    _battery_area = lv_obj_create(main_cont);
+    _battery_area = lv_obj_create(_main_page);
     lv_obj_remove_style_all(_battery_area); 
-    lv_obj_set_size(_battery_area, 55, 20);
-    lv_obj_align(_battery_area, LV_ALIGN_TOP_RIGHT, -10, 5); 
+    lv_obj_set_size(_battery_area, 25, 20);
+    lv_obj_align(_battery_area, LV_ALIGN_TOP_LEFT, 12, 5); 
 
-    _battery_text = lv_label_create(_battery_area);
-    lv_label_set_text(_battery_text, "--%");
-    lv_obj_set_style_text_font(_battery_text, &awesome_14, 0); 
-    lv_obj_align(_battery_text, LV_ALIGN_LEFT_MID, 0, 0); 
+    // _battery_text = lv_label_create(_battery_area);
+    // lv_label_set_text(_battery_text, "--%");
+    // lv_obj_set_style_text_font(_battery_text, &awesome_14, 0); 
+    // lv_obj_align(_battery_text, LV_ALIGN_LEFT_MID, 0, 0); 
 
     lv_obj_t* battery_shell = lv_obj_create(_battery_area);
     lv_obj_set_size(battery_shell, 20, 10);
@@ -136,13 +152,22 @@ void UiMusicPlayer::create_ui()
     lv_obj_set_style_bg_opa(_battery_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(_battery_bar, 1, 0);
 
+    // setting
+    _setting_icon = lv_label_create(_main_page);
+    lv_label_set_text(_setting_icon, LV_SYMBOL_SETTINGS);
+    lv_obj_set_size(_setting_icon, 24, 24);
+    lv_obj_align(_setting_icon, LV_ALIGN_TOP_RIGHT, -10, 5);
+    lv_obj_set_style_text_color(_setting_icon, lv_color_white(), 0);
+    lv_obj_add_flag(_setting_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(_setting_icon, setting_event_cb, LV_EVENT_CLICKED, NULL);
+
     // 2. Album Art - Now at the TOP
-     _album_art = lv_image_create(main_cont);
+     _album_art = lv_image_create(_main_page);
     lv_obj_set_size(_album_art, 130, 130);
     lv_obj_set_style_bg_color(_album_art, lv_color_hex(0x1A1A1A), 0);
     lv_obj_set_style_border_width(_album_art, 0, 0);
     lv_obj_set_style_pad_all(_album_art, 0, 0);
-    lv_obj_align(_album_art, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_align(_album_art, LV_ALIGN_TOP_MID, 0, 30);
     lv_obj_clear_flag(_album_art, LV_OBJ_FLAG_SCROLLABLE);
     lv_image_set_src(_album_art, &default_albumart);
     uint32_t scale_factor = (130 * LV_SCALE_NONE) / 200; // Result is 166 (approx 65%)
@@ -154,10 +179,10 @@ void UiMusicPlayer::create_ui()
     lv_obj_add_event_cb(_album_art, visual_switch_event_cb, LV_EVENT_CLICKED, NULL);
 
     // 2.5 Spectrum Visualizer
-    _sp_cont = lv_obj_create(main_cont);
+    _sp_cont = lv_obj_create(_main_page);
     int _sp_cont_width = CONFIG_LCD_H_RES - 40;
     lv_obj_set_size(_sp_cont, _sp_cont_width, 120); 
-    lv_obj_align(_sp_cont, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_align(_sp_cont, LV_ALIGN_TOP_MID, 0, 30);
 
     lv_obj_set_style_pad_all(_sp_cont, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(_sp_cont, 0, LV_PART_MAIN);
@@ -194,7 +219,7 @@ void UiMusicPlayer::create_ui()
     lv_obj_add_flag(_sp_cont, LV_OBJ_FLAG_HIDDEN); 
 
     // 3. Song Title - Positioned BELOW Album Art
-    _title = lv_label_create(main_cont);
+    _title = lv_label_create(_main_page);
     lv_label_set_text(_title, "No Song Playing");
     lv_obj_set_width(_title, CONFIG_LCD_H_RES);
     lv_obj_set_style_text_color(_title, lv_color_hex(0xFFFFFF), 0);
@@ -204,7 +229,7 @@ void UiMusicPlayer::create_ui()
     lv_obj_align_to(_title, _sp_cont, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 
     // 4. Artist Name - Positioned BELOW Song Title
-    _artist = lv_label_create(main_cont);
+    _artist = lv_label_create(_main_page);
     lv_label_set_text(_artist, "No Artist");
     lv_obj_set_width(_artist, CONFIG_LCD_H_RES);
     lv_obj_set_height(_artist, 20);
@@ -215,14 +240,14 @@ void UiMusicPlayer::create_ui()
     lv_obj_align_to(_artist, _title, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
 
     // 5. Progress Slider
-    _play_slider = lv_slider_create(main_cont);
+    _play_slider = lv_slider_create(_main_page);
     lv_obj_set_width(_play_slider, 200);
     lv_obj_set_height(_play_slider, 6);
     lv_obj_align(_play_slider, LV_ALIGN_BOTTOM_MID, 0, -80);
     lv_obj_set_style_bg_color(_play_slider, lv_color_hex(0x1DB954), LV_PART_INDICATOR);
 
     // 6. contrl button
-    lv_obj_t * btn_play = lv_btn_create(main_cont);
+    lv_obj_t * btn_play = lv_btn_create(_main_page);
     lv_obj_set_size(btn_play, 50, 50);
     lv_obj_set_style_radius(btn_play, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(btn_play, lv_color_hex(0xFFFFFF), 0);
@@ -235,7 +260,7 @@ void UiMusicPlayer::create_ui()
     lv_obj_add_event_cb(btn_play, play_ctrl_event_cb, LV_EVENT_CLICKED, (void *)1);
 
     // --- prev ---
-    lv_obj_t * btn_prev = lv_btn_create(main_cont);
+    lv_obj_t * btn_prev = lv_btn_create(_main_page);
     lv_obj_set_size(btn_prev, 60, 60);
     lv_obj_align_to(btn_prev, btn_play, LV_ALIGN_OUT_LEFT_MID, -15, 0);
 
@@ -251,7 +276,7 @@ void UiMusicPlayer::create_ui()
     lv_obj_add_event_cb(btn_prev, play_ctrl_event_cb, LV_EVENT_CLICKED, (void *)2);
 
     // --- next ---
-    lv_obj_t * btn_next = lv_btn_create(main_cont);
+    lv_obj_t * btn_next = lv_btn_create(_main_page);
     lv_obj_set_size(btn_next, 60, 60);
     lv_obj_align_to(btn_next, btn_play, LV_ALIGN_OUT_RIGHT_MID, 15, 0);
 
@@ -293,7 +318,9 @@ void UiMusicPlayer::setTitle(const char *title)
         return;
     }
 
-    lv_label_set_text(_title, title);
+    if(_title) {
+        lv_label_set_text(_title, title);
+    }
     LvglManager::lvgl_unlock();
 }
 
@@ -304,7 +331,9 @@ void UiMusicPlayer::setArtist(const char *artist)
         return;
     }
 
-    lv_label_set_text(_artist, artist);
+    if(_artist) {
+        lv_label_set_text(_artist, artist);
+    }
     LvglManager::lvgl_unlock();
 
 }
@@ -368,7 +397,9 @@ void UiMusicPlayer::setPlayPosition(uint32_t play_pos_ms)
     }
 
     _cur_play_pos_ms = play_pos_ms;
-    lv_slider_set_value(_play_slider, (int32_t)_cur_play_pos_ms, LV_ANIM_OFF);
+    if(_play_slider) {
+        lv_slider_set_value(_play_slider, (int32_t)_cur_play_pos_ms, LV_ANIM_OFF);
+    }
     LvglManager::lvgl_unlock();
 }
 
@@ -425,7 +456,7 @@ void UiMusicPlayer::handleVisualSwitchEvent(lv_event_t * e)
     } else if (_visual_type == visualType::SPECTRUM) {
         lv_obj_clear_flag(_album_art, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(_sp_cont, LV_OBJ_FLAG_HIDDEN);
-        UiMusicPlayer::instance()._visual_type = visualType::ALBUM_ART;
+        _visual_type = visualType::ALBUM_ART;
     }
 }
 
@@ -602,7 +633,6 @@ void UiMusicPlayer::batteryVoltageReadTask() {
             ESP_LOGE(_MP_TAG, "Failed to acquire LVGL lock to set play position");
             continue;
         }
-        lv_label_set_text(_battery_text, voltage_str);
         int target_width = (percentage * 16) / 100;
     
         if (target_width <= 0 && percentage > 0) target_width = 1;

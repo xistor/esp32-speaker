@@ -52,8 +52,6 @@ esp_err_t LvglManager::init(uint16_t width, uint16_t height)
     _lcdMgr.init(width, height);
     _touchMgr.init();
 
-    // uiMusicPlayer.create_ui();
-
     ESP_LOGI(_LVMGR_TAG, "Install LVGL tick timer");
     const esp_timer_create_args_t timer_args = {
         .callback = &LvglManager::tickTimer,

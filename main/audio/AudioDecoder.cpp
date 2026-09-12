@@ -6,6 +6,16 @@ AudioDecoder::AudioDecoder()
 {
     _audio_raw_data_mux = xSemaphoreCreateMutex();
 
+    _running.store(true);
+
+    esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
+    cfg.thread_name = "i2STask";
+    cfg.pin_to_core = 0; 
+    cfg.prio = 15; 
+
+    esp_pthread_set_cfg(&cfg);
+    _decode_task_thread = std::thread(&AudioDecoder::audio_decode_task, this);
+
 }
 
 AudioDecoder::~AudioDecoder()
@@ -15,31 +25,23 @@ AudioDecoder::~AudioDecoder()
         _audio_raw_data_mux = nullptr;
     }
 
-}
-
-void AudioDecoder::start()
-{
-    _running.store(true);
-
-    esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
-    cfg.thread_name = "i2STask";
-    cfg.pin_to_core = 0; 
-    cfg.prio = 15; 
-
-    esp_pthread_set_cfg(&cfg);
-
-    _decode_task_thread = std::thread(&AudioDecoder::audio_decode_task, this);
-
-}
-
-void AudioDecoder::stop()
-{
     _running.store(false);
     _a2dp_raw_queue.put(nullptr); // unblock the take() call in audio_decode_task()
 
     if (_decode_task_thread.joinable()) {
         _decode_task_thread.join();
     }
+
+}
+
+void AudioDecoder::start()
+{
+
+}
+
+void AudioDecoder::stop()
+{
+
 }
 
 void AudioDecoder::decoderDataFlush()

@@ -19,10 +19,16 @@
 
 #include "ThreadPool.h"
 
+#include "WifiMgr.h"
 
 #define APP_DELAY_VALUE 50  // 5ms
 
 
+enum class ProtocolType {
+    NONE = 0,
+    PROTOCOL_A2DP,
+    PROTOCOL_AIRPLAY,
+};
 
 /**
  * 
@@ -144,6 +150,7 @@ private:
 
     ThreadPool _worker_pool{2};
 
+    WifiMgr &_wifi_mgr = WifiMgr::instance();
 
 };
 

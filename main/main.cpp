@@ -8,7 +8,6 @@ extern "C" void app_main(void)
 {
     SpeakerApp& app = SpeakerApp::instance();
 
-
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
     i2s_std_config_t std_cfg = {
@@ -33,4 +32,5 @@ extern "C" void app_main(void)
     if (app.init() != ESP_OK) {
         ESP_LOGE("X_SPEAKER", "SpeakerApp initialization failed");
     }
+
 }

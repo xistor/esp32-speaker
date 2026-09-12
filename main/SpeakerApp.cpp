@@ -121,6 +121,7 @@ void SpeakerApp::bluetoothDeinit() {
 esp_err_t SpeakerApp::init()
 {
     esp_err_t err;
+    ProtocolType protocol_type = ProtocolType::PROTOCOL_A2DP;
 
     // configure the GPIO pin for mute control
     gpio_reset_pin((gpio_num_t)CONFIG_XSMT_PIN);
@@ -136,7 +137,17 @@ esp_err_t SpeakerApp::init()
 
     _msg_handler_thread = std::thread(&SpeakerApp::msgHandler, this);
 
-    bluetoothInit();
+    getFromNvs("common_config", "protocol", (uint8_t *)&protocol_type, sizeof(ProtocolType));
+
+    if( protocol_type == ProtocolType::PROTOCOL_A2DP) {
+        ESP_LOGI(_XSPK_TAG, "Initializing Bluetooth stack for A2DP");
+        bluetoothInit();
+    } else if (protocol_type == ProtocolType::PROTOCOL_AIRPLAY) {
+        ESP_LOGI(_XSPK_TAG, "Initializing Bluetooth stack for AirPlay");
+        _wifi_mgr.init();
+    } else {
+        ESP_LOGW(_XSPK_TAG, "Unknown protocol type in NVS: %d", static_cast<int>(protocol_type));
+    }
 
     esp_err_t lv_err = LvglManager::instance().init(CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
     if (lv_err != ESP_OK) {
@@ -148,7 +159,7 @@ esp_err_t SpeakerApp::init()
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 
-    _ui_music_player.create_ui();
+    _ui_music_player.init();
 
     _ui_music_player.regPlayCtrlCallback(std::bind(&SpeakerApp::playControlCb, this, std::placeholders::_1));
 
@@ -250,7 +261,7 @@ void SpeakerApp::rcCtrlCallback(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_par
         default:
             break;
     }
-        
+
 }
 
 void SpeakerApp::rcTgCallback(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param)
