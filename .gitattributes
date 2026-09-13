@@ -15,6 +15,7 @@ main/** linguist-language=C++
 # ESP-IDF build output: vendored so it doesn't pollute language statistics.
 build/**        linguist-vendored
 managed_components/** linguist-vendored
+main/res/**         linguist-vendored
 
 # sdkconfig is an ESP-IDF-generated Kconfig dump; not interesting to the language bar.
 sdkconfig       linguist-vendored

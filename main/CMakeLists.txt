@@ -2,9 +2,8 @@ file(GLOB_RECURSE SOURCES
     "*.cpp"
     "audio/*.cpp"
     "display/*.cpp"
-    "fonts/*.c"
+    "res/**/*.c"
     "ui/*.cpp"
-    "ui/*.c"
     "common/*.cpp"
     "network/*.cpp"
 )
