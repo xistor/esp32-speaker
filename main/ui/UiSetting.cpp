@@ -2,7 +2,7 @@
 #include "LvglManager.h"
 #include "esp_log.h"
 #include "colorDef.h"
-#include "NvsHelper.h"
+#include "Setting.h"
 #include "SpeakerApp.h"
 
 /* 配置全屏页面：禁用滚动并取消手势上抛，使上滑手势能由页面自身捕获 */
@@ -125,14 +125,8 @@ void UiSetting::openAudioSourcePage()
     }
 
     // 从 NVS 加载上次的协议选择，保持 UI 与 SpeakerApp::init 中读取的值一致
-    ProtocolType protocol_type = ProtocolType::PROTOCOL_A2DP;
-    NvsHelper::load("common_config", "audio_protocol",
-                    reinterpret_cast<uint8_t *>(&protocol_type), sizeof(ProtocolType));
-    if (protocol_type == ProtocolType::PROTOCOL_AIRPLAY) {
-        _current_protocol = 1;
-    } else {
-        _current_protocol = 0;
-    }
+    AudioSource audiosrc = AudioSource::A2DP;
+    _current_audio_source = Setting::instance().getAudioSource();
 
     _audio_source_page = lv_obj_create(lv_scr_act());
     configFullScreenPage(_audio_source_page, audioSourceGestureCb);
@@ -172,9 +166,9 @@ void UiSetting::updateProtocolView()
 {
     if(_btn_bt != nullptr && _btn_airplay != nullptr) {
         lv_obj_set_style_bg_color(_btn_bt,
-            _current_protocol == 0 ? COLOR_SETTING_BTN_SELECTED : COLOR_SETTING_BTN_UNSELECTED, 0);
+            _current_audio_source == AudioSource::A2DP ? COLOR_SETTING_BTN_SELECTED : COLOR_SETTING_BTN_UNSELECTED, 0);
         lv_obj_set_style_bg_color(_btn_airplay,
-            _current_protocol == 1 ? COLOR_SETTING_BTN_SELECTED : COLOR_SETTING_BTN_UNSELECTED, 0);
+            _current_audio_source == AudioSource::AIRPLAY ? COLOR_SETTING_BTN_SELECTED : COLOR_SETTING_BTN_UNSELECTED, 0);
     }
 }
 
@@ -189,20 +183,18 @@ void UiSetting::protocolSelectEventCb(lv_event_t * e)
     lv_obj_t * clicked_obj = (lv_obj_t *)lv_event_get_target(e);
     UiSetting & thiz = UiSetting::instance();
 
-    ProtocolType protocol_type = ProtocolType::PROTOCOL_A2DP;
     if(clicked_obj == thiz._btn_bt) {
-        thiz._current_protocol = 0;
-        protocol_type = ProtocolType::PROTOCOL_A2DP;
+        thiz._current_audio_source = AudioSource::A2DP;
     } else if(clicked_obj == thiz._btn_airplay) {
-        thiz._current_protocol = 1;
-        protocol_type = ProtocolType::PROTOCOL_AIRPLAY;
+        thiz._current_audio_source = AudioSource::AIRPLAY;
     } else {
         return;
     }
 
     // 立即写入 NVS，下次启动 SpeakerApp::init 会按该协议初始化栈
-    NvsHelper::save("common_config", "audio_protocol",
-                    reinterpret_cast<const uint8_t *>(&protocol_type), sizeof(ProtocolType));
+
+    Setting::instance().setAudioSource(thiz._current_audio_source);
+
 
     thiz.updateProtocolView();
 }

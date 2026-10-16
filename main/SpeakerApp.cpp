@@ -7,7 +7,8 @@
 #include "esp_spiffs.h"
 #include "jpeg_decoder.h"
 #include "esp_a2dp_api.h"
-
+#include "WebServer.h"
+#include "AirPlayer.h"
 
 SpeakerApp::SpeakerApp()
     : _audio_i2s() // default-constructed; configuration later
@@ -60,8 +61,6 @@ void SpeakerApp::a2dDeinit() {
 esp_err_t SpeakerApp::bluetoothInit() {
 
     esp_err_t err;
-    /* release the controller memory for Bluetooth Low Energy. */
-    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     if ((err = esp_bt_controller_init(&bt_cfg)) != ESP_OK) {
@@ -122,7 +121,10 @@ void SpeakerApp::bluetoothDeinit() {
 esp_err_t SpeakerApp::init()
 {
     esp_err_t err;
-    ProtocolType protocol_type = ProtocolType::PROTOCOL_A2DP;
+    AudioSource audio_src = AudioSource::A2DP;
+
+    /* release the controller memory for Bluetooth Low Energy. */
+    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
 
     // configure the GPIO pin for mute control
     gpio_reset_pin((gpio_num_t)CONFIG_XSMT_PIN);
@@ -138,16 +140,32 @@ esp_err_t SpeakerApp::init()
 
     _msg_handler_thread = std::thread(&SpeakerApp::msgHandler, this);
 
-    NvsHelper::load("common_config", "audio_protocol", (uint8_t *)&protocol_type, sizeof(ProtocolType));
+    audio_src  = Setting::instance().getAudioSource();
 
-    if( protocol_type == ProtocolType::PROTOCOL_A2DP) {
+
+
+    if( audio_src == AudioSource::A2DP) {
         ESP_LOGI(_XSPK_TAG, "Initializing Bluetooth stack for A2DP");
         bluetoothInit();
-    } else if (protocol_type == ProtocolType::PROTOCOL_AIRPLAY) {
-        ESP_LOGI(_XSPK_TAG, "Initializing Bluetooth stack for AirPlay");
+    } else if (audio_src == AudioSource::AIRPLAY) {
+        ESP_LOGI(_XSPK_TAG, "Initializing AirPlay mDNS");
+        esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+
         _wifi_mgr.init();
+
+        esp_err_t http_err = _web_server.start();
+        if (http_err != ESP_OK) {
+            ESP_LOGE(_XSPK_TAG, "Web server failed to start: %s", esp_err_to_name(http_err));
+        }
+        _airplayer.init();
+        esp_err_t mdns_err = _airplayer.bonjour();
+        if (mdns_err != ESP_OK) {
+            ESP_LOGE(_XSPK_TAG, "AirPlay mDNS failed to start: %s", esp_err_to_name(mdns_err));
+        }
+
     } else {
-        ESP_LOGW(_XSPK_TAG, "Unknown protocol type in NVS: %d", static_cast<int>(protocol_type));
+        ESP_LOGW(_XSPK_TAG, "Unknown protocol type in NVS: %d defaulting to A2DP", static_cast<int>(audio_src));
+        bluetoothInit();
     }
 
     esp_err_t lv_err = LvglManager::instance().init(CONFIG_LCD_H_RES, CONFIG_LCD_V_RES);
@@ -498,7 +516,7 @@ void SpeakerApp::checkAndConnectBondedDevice(void) {
 
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
 
-    if (NvsHelper::load("bt_storage", "last_mac", _saved_peer_addr, sizeof(esp_bd_addr_t))) {
+    if (NvsHelper::load("bt_storage", "last_mac", _saved_peer_addr, sizeof(esp_bd_addr_t)) == ESP_OK) {
         ESP_LOGI(_XSPK_TAG, "Previously bonded device found, attempting to proactively connect...");
         esp_a2d_sink_connect(_saved_peer_addr);
 
@@ -683,7 +701,7 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
                     free(_cover_pixels);
                     _cover_pixels = nullptr;
                 }
-                _cover_pixels = (uint16_t *)calloc(200 * 200, sizeof(uint16_t));
+                _cover_pixels = (uint16_t *)heap_caps_malloc(200 * 200 * 2, MALLOC_CAP_SPIRAM);
 
                 /* JPEG decode config */
                 esp_jpeg_image_cfg_t jpeg_cfg = {
@@ -824,7 +842,9 @@ void SpeakerApp::saveCoverImageData(const uint8_t *data, uint32_t data_len)
 
     // ESP_LOGI(_XSPK_TAG, "Received cover art data: %d", data_len);
 
-    uint8_t *p_buf = (uint8_t *)realloc(_cover_image_data, _cover_image_size * sizeof(uint8_t));
+    uint8_t *p_buf = (uint8_t *)heap_caps_realloc(_cover_image_data,
+                                                  _cover_image_size * sizeof(uint8_t),
+                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!p_buf) {
         ESP_LOGE(_XSPK_TAG, "%s: The memory allocation of Cover art image data failed", __func__);
         if (_cover_image_data) {

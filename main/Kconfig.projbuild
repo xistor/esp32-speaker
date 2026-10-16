@@ -1,7 +1,7 @@
 menu "X Speaker Configuration"
     config SPEAKER_DEVICE_NAME
         string "Local Device Name"
-        default "X_SPEAKER"
+        default "esp32speaker"
         help
             Use this option to set local device name.
 
@@ -195,6 +195,15 @@ menu "X Speaker Configuration"
         default 512
         help
             Number of samples for FFT processing in the UI music player.
+
+#wifi
+    config WIFI_AP_SSID
+        string "WiFi AP SSID"
+        default "esp32speaker"
+        help
+            SSID for the WiFi access point.
+
+
 
 endmenu
 

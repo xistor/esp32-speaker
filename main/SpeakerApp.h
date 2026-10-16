@@ -22,15 +22,12 @@
 #include "NvsHelper.h"
 
 #include "WifiMgr.h"
+#include "WebServer.h"
+#include "AirPlayer.h"
 
 #define APP_DELAY_VALUE 50  // 5ms
 
 
-enum class ProtocolType {
-    NONE = 0,
-    PROTOCOL_A2DP,
-    PROTOCOL_AIRPLAY,
-};
 
 /**
  * 
@@ -150,6 +147,8 @@ private:
     ThreadPool _worker_pool{2};
 
     WifiMgr &_wifi_mgr = WifiMgr::instance();
+    AirPlayer _airplayer;
+    WebServer _web_server;
 
 };
 

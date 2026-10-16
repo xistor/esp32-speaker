@@ -86,13 +86,29 @@ private:
 
     std::atomic<bool> _fft_running{false};
     std::thread _fft_process_thread;
-    float *_fft_window = nullptr;
-    float *_fft_io_buffer = nullptr;
-    RingbufHandle_t _ringbuf_fft = nullptr; 
-    size_t _fft_buf_size = 32 * 1024;
-    uint8_t _band_widths[CONFIG_UI_SPECTRUM_BANDS_NUMS];
 
-    SemaphoreHandle_t _fft_write_semaphore = nullptr;
+    static constexpr int FFT_SIZE = CONFIG_UI_FFT_SAMPLE_SIZE;
+    static constexpr int FFT_NUM_BINS = FFT_SIZE / 2;
+    // One analysis block: FFT_SIZE stereo int16 samples. This also caps how much
+    // audio audioVisual() queues per call, so the ring buffer below always has
+    // room for at least one whole item.
+    static constexpr size_t FFT_BLOCK_BYTES = FFT_SIZE * sizeof(int16_t) * 2;
+    // Four blocks of slack. The analyzer drains the ring buffer far faster than
+    // audio arrives, so the buffer only has to absorb scheduling jitter - any
+    // backlog here is audio we are about to throw away anyway.
+    static constexpr size_t FFT_RINGBUF_SIZE = FFT_BLOCK_BYTES * 4;
+    // The spectrum is redrawn every 33 ms, but audio at 44.1 kHz produces ~170
+    // blocks/s. Computing every one of them throws away most of the work, so the
+    // analyzer runs at 50 Hz and always keeps the newest block instead.
+    static constexpr int64_t FFT_FRAME_INTERVAL_US = 20000;
+
+    float *_fft_window = nullptr;   // Hann window, FFT_SIZE floats
+    float *_fft_io_buffer = nullptr; // complex FFT input/output, FFT_SIZE * 2 floats
+    int16_t *_fft_block = nullptr;   // accumulating stereo PCM, FFT_SIZE * 2 samples
+    RingbufHandle_t _ringbuf_fft = nullptr;
+    // Last bin index owned by each band. Ends tile bins [1, FFT_NUM_BINS)
+    // exactly, so the band pass is a single walk with no per-bin bounds test.
+    uint16_t _band_bin_end[CONFIG_UI_SPECTRUM_BANDS_NUMS];
 
     visualType _visual_type = visualType::SPECTRUM;
 
@@ -101,7 +117,10 @@ private:
 
     void handlePlayCtrlEvent(lv_event_t * e);
     void fftProcessingTask();
-    void calculateBandWidths();
+    void processFftBlock();
+    void calculateBandEnds();
+
+    static void applyBandEnergy(int band, float energy_sum, int bins);
 
     void initBatteryAdc();
     float getRealBatteryVoltage();

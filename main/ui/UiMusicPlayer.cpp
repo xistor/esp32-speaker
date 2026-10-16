@@ -3,8 +3,11 @@
 #include "UiMusicPlayer.h"
 #include "LvglManager.h"
 #include <cmath>
+#include <cstring>
 #include "esp_dsp.h"
 #include "esp_pthread.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,29 +30,33 @@ int16_t UiMusicPlayer::s_current_fft_bands[CONFIG_UI_SPECTRUM_BANDS_NUMS];
 UiMusicPlayer::UiMusicPlayer()
 {
 
-    _ringbuf_fft = xRingbufferCreate(_fft_buf_size, RINGBUF_TYPE_BYTEBUF);
+    _ringbuf_fft = xRingbufferCreate(FFT_RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF);
     if (_ringbuf_fft == nullptr) {
         ESP_LOGE(_MP_TAG, "Failed to create ring buffer for FFT data");
         return;
     }
 
-    _fft_write_semaphore = xSemaphoreCreateBinary();
+    // The analyzer walks these buffers several times per frame. Handing them to
+    // plain new() lets them land in PSRAM under memory pressure, where every
+    // pass costs cache misses over SPI - pin them to internal DRAM instead.
+    _fft_window = static_cast<float *>(
+        heap_caps_calloc(FFT_SIZE, sizeof(float), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    _fft_io_buffer = static_cast<float *>(
+        heap_caps_calloc(FFT_SIZE * 2, sizeof(float), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    _fft_block = static_cast<int16_t *>(
+        heap_caps_calloc(FFT_SIZE * 2, sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
-     if (_fft_write_semaphore == nullptr) {
-        ESP_LOGE(_MP_TAG, "%s, semaphore create failed", __func__);
-        return;
+    if (_fft_window == nullptr || _fft_io_buffer == nullptr || _fft_block == nullptr) {
+        ESP_LOGE(_MP_TAG, "Failed to allocate FFT working buffers");
     }
-
-    _fft_window = new float[CONFIG_UI_FFT_SAMPLE_SIZE];
-    _fft_io_buffer = new float[CONFIG_UI_FFT_SAMPLE_SIZE * 2];
 }
 
 UiMusicPlayer::~UiMusicPlayer()
 {
 
     _fft_running.store(false);
-    xSemaphoreGive(_fft_write_semaphore);
 
+    // fftProcessingTask wakes on its ring buffer timeout, so the join is bounded.
     if (_fft_process_thread.joinable()) {
         _fft_process_thread.join();
     }
@@ -60,13 +67,18 @@ UiMusicPlayer::~UiMusicPlayer()
     }
 
     if(_fft_window) {
-        delete[] _fft_window;
+        heap_caps_free(_fft_window);
         _fft_window = nullptr;
     }
 
     if(_fft_io_buffer) {
-        delete[] _fft_io_buffer;
+        heap_caps_free(_fft_io_buffer);
         _fft_io_buffer = nullptr;
+    }
+
+    if(_fft_block) {
+        heap_caps_free(_fft_block);
+        _fft_block = nullptr;
     }
 
 }
@@ -97,6 +109,15 @@ void UiMusicPlayer::init()
 {
 
     main_page();
+
+    // The LVGL pool is a fixed static array sized by CONFIG_LV_MEM_SIZE_KILOBYTES, and
+    // LVGL spins on a failed allocation rather than reporting it. Log the real high-water
+    // mark so the pool can be sized from measurement instead of guesswork.
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    ESP_LOGI(_MP_TAG, "LVGL pool: total=%u max_used=%u free=%u biggest_free=%u frag=%u%%",
+             (unsigned)mon.total_size, (unsigned)mon.max_used, (unsigned)mon.free_size,
+             (unsigned)mon.free_biggest_size, mon.frag_pct);
 }
 
 void UiMusicPlayer::main_page()
@@ -299,22 +320,29 @@ void UiMusicPlayer::main_page()
 
     LvglManager::lvgl_unlock();
 
+    initBatteryAdc();
 
-    calculateBandWidths();
+    esp_pthread_cfg_t bat_cfg = esp_pthread_get_default_config();
+    bat_cfg.thread_name = "batMonTask";
+    bat_cfg.pin_to_core = tskNO_AFFINITY;
+    bat_cfg.stack_alloc_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    esp_pthread_set_cfg(&bat_cfg);
+
+    _bat_volt_read_thread = std::thread(&UiMusicPlayer::batteryVoltageReadTask, this);
+
     _fft_running.store(true);
 
+
     esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
-    cfg.stack_size = 1024 * 4;
-    cfg.thread_name = "fftProcessingTask";
+    cfg.stack_size = 1024 * 2 ;
+    cfg.thread_name = "fftProcTask";
     cfg.pin_to_core = 1;
+    cfg.stack_alloc_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     esp_pthread_set_cfg(&cfg);
 
     _fft_process_thread = std::thread(&UiMusicPlayer::fftProcessingTask, this);
     _visual_type = visualType::ALBUM_ART;
 
-
-    initBatteryAdc();
-    _bat_volt_read_thread = std::thread(&UiMusicPlayer::batteryVoltageReadTask, this);
 }
 
 void UiMusicPlayer::setTitle(const char *title)
@@ -485,113 +513,195 @@ void UiMusicPlayer::audioVisual(const uint8_t *data, size_t size)
         return;
     }
 
-    if (xRingbufferSend(_ringbuf_fft, data, size, (TickType_t)0) != pdTRUE) {
-        ESP_LOGW(_MP_TAG, "Failed to send audio data to FFT ring buffer");
-    } else {
-        xSemaphoreGive(_fft_write_semaphore);
+    // A byte ring buffer can only hold an item as large as itself, and the file
+    // decoder hands us chunks of several KB that it grows on demand. Queue the
+    // audio in block-sized pieces: sending the caller's buffer whole would fail
+    // outright and starve the analyzer with no visible symptom.
+    static bool warned_full = false;
+    size &= ~(size_t)3;   // whole stereo int16 samples only
+
+    // Only the newest window can ever be displayed, so if the producer hands us
+    // more than the ring buffer holds, keep its tail rather than its head.
+    if (size > FFT_RINGBUF_SIZE) {
+        data += size - FFT_RINGBUF_SIZE;
+        size = FFT_RINGBUF_SIZE;
+    }
+
+    while (size > 0) {
+        const size_t chunk = (size > FFT_BLOCK_BYTES) ? FFT_BLOCK_BYTES : size;
+
+        if (xRingbufferSend(_ringbuf_fft, data, chunk, (TickType_t)0) != pdTRUE) {
+            // The analyzer is behind, not audio playback. The visualisation only
+            // ever shows the newest window, so drop the rest and keep going.
+            if (!warned_full) {
+                warned_full = true;
+                ESP_LOGW(_MP_TAG, "FFT ring buffer full, dropping audio");
+            }
+            break;
+        }
+
+        data += chunk;
+        size -= chunk;
     }
 }
 
 void UiMusicPlayer::fftProcessingTask() {
 
-    esp_err_t ret;
-    const int FFT_SIZE = CONFIG_UI_FFT_SAMPLE_SIZE;
+    // Size the tables for the transform we actually run. The tables scale with
+    // the init size, so initialising at CONFIG_DSP_MAX_FFT_SIZE would spend
+    // ~21 KB of RAM on tables a 256-point transform never touches.
+    if (dsps_fft2r_init_fc32(nullptr, FFT_SIZE) != ESP_OK) {
+        ESP_LOGE(_MP_TAG, "Not possible to initialize FFT for %d points", FFT_SIZE);
+        return;
+    }
 
-    ret = dsps_fft2r_init_fc32(NULL, CONFIG_DSP_MAX_FFT_SIZE);
-    if (ret  != ESP_OK) {
-        ESP_LOGE(_MP_TAG, "Not possible to initialize FFT. Error = %i", ret);
+    if (_fft_window == nullptr || _fft_io_buffer == nullptr || _fft_block == nullptr) {
+        ESP_LOGE(_MP_TAG, "FFT working buffers unavailable, analyzer not started");
+        dsps_fft2r_deinit_fc32();
         return;
     }
 
     // Generate hann window
     dsps_wind_hann_f32(_fft_window, FFT_SIZE);
 
-    float magnitudes[FFT_SIZE / 2] = {0};
+    calculateBandEnds();
+
+    int block_samples = 0;   // stereo samples currently held in _fft_block
+    int64_t last_frame_us = 0;
 
     while (_fft_running.load()) {
 
-        if (pdTRUE == xSemaphoreTake(_fft_write_semaphore, portMAX_DELAY)) {
+        size_t item_size = 0;
+        // The timeout is what lets this task notice both a stalled stream and
+        // a shutdown request, so no separate semaphore is needed.
+        uint8_t *item = static_cast<uint8_t *>(
+            xRingbufferReceive(_ringbuf_fft, &item_size, pdMS_TO_TICKS(100)));
+        if (item == nullptr || item_size == 0) {
+            continue;
+        }
 
-            while (_fft_running.load()) {
-                size_t item_size = 0;
-                uint8_t *audio_data = static_cast<uint8_t *>(xRingbufferReceiveUpTo
-                    (_ringbuf_fft, &item_size, pdMS_TO_TICKS(3), FFT_SIZE * 4));
-                
-                if (audio_data == nullptr || item_size == 0) {
-                    // ESP_LOGI(_MP_TAG, "No audio data received, waiting...");
-                    break;
-                }
+        // Whole stereo int16 frames only; a trailing partial frame would
+        // desync the accumulator.
+        const uint8_t *chunk = item;
+        const size_t chunk_size = item_size & ~(size_t)3;
+        size_t offset = 0;
 
-                int16_t *pcm16 = (int16_t *)audio_data;
-                for(int i = 0; i < FFT_SIZE; i++) {
-                    int16_t left = pcm16[i * 2];
-                    int16_t right = pcm16[i * 2 + 1];
+        while (offset < chunk_size) {
+            const size_t room = (size_t)(FFT_SIZE - block_samples) * sizeof(int16_t) * 2;
+            size_t take = chunk_size - offset;
+            if (take > room) {
+                take = room;
+            }
 
-                    float mono = (left + right) / 2.0f;
+            memcpy(&_fft_block[block_samples * 2], &chunk[offset], take);
 
-                    mono *= _fft_window[i];
-                    _fft_io_buffer[i * 2]     = mono;
-                    _fft_io_buffer[i * 2 + 1] = 0.0f;
+            offset += take;
+            block_samples += take / 4;
 
-                }
-                vRingbufferReturnItem(_ringbuf_fft, audio_data);
+            if (block_samples < FFT_SIZE) {
+                continue;
+            }
+            block_samples = 0;
 
-                dsps_fft2r_fc32(_fft_io_buffer, FFT_SIZE);
-                dsps_bit_rev_fc32(_fft_io_buffer, FFT_SIZE);
-
-                for (int i = 0; i < FFT_SIZE / 2; i++) {
-                    float real = _fft_io_buffer[i * 2];
-                    float imag = _fft_io_buffer[i * 2 + 1];
-                    magnitudes[i] = sqrtf(real * real + imag * imag);
-                }
-
-
-                int fft_index = 1;
-
-                for (int b = 0; b < CONFIG_UI_SPECTRUM_BANDS_NUMS; b++) {
-                    float sum = 0;
-                    int width = _band_widths[b];
-                    
-                    for (int w = 0; w < width; w++) {
-                        if (fft_index < FFT_SIZE / 2) {
-                            sum += magnitudes[fft_index++];
-                        }
-                    }
-                    float avg_magnitude = sum / width;
-
-                    float dB = 20.0f * log10f(avg_magnitude + 1e-4f);
-
-                    float normalized = dB / 120.0f; 
-
-                    if (normalized > 1.0f) normalized = 1.0f;
-                    if (normalized < 0.0f) normalized = 0.0f;
-
-                    s_current_fft_bands[b] = normalized * 120;
-                }
+            // Rate gate. Any block that arrives faster than the display can show
+            // is dropped rather than analysed: the visualisation only ever
+            // displays the newest window, so the older ones are wasted work.
+            const int64_t now = esp_timer_get_time();
+            if (_fft_running.load() && (now - last_frame_us) >= FFT_FRAME_INTERVAL_US) {
+                last_frame_us = now;
+                processFftBlock();
             }
         }
+
+        vRingbufferReturnItem(_ringbuf_fft, item);
     }
 
+    dsps_fft2r_deinit_fc32();
 }
 
-void UiMusicPlayer::calculateBandWidths(void) {
-    int last_end_index = 1;  // Skip bin 0 (DC offset)
-    float base = 1.2f;       // Reduced base offset optimized for 64 splits
+void UiMusicPlayer::processFftBlock() {
+
+    // Downmix to mono, apply the window, and lay the result out as complex input.
+    // The mix stays in integer: (l + r) >> 1 is exact for int16 and avoids a
+    // float divide per sample.
+    const int16_t *pcm16 = _fft_block;
+    for (int i = 0; i < FFT_SIZE; i++) {
+        const float mono = (float)((pcm16[i * 2] + pcm16[i * 2 + 1]) >> 1);
+        _fft_io_buffer[i * 2]     = mono * _fft_window[i];
+        _fft_io_buffer[i * 2 + 1] = 0.0f;
+    }
+
+    dsps_fft2r_fc32(_fft_io_buffer, FFT_SIZE);
+    dsps_bit_rev_fc32(_fft_io_buffer, FFT_SIZE);
+
+    // Walk the bins once, accumulating energy per band. Band ends tile the bins
+    // exactly, so there is no magnitude array and no bounds test per bin.
+    int band = 0;
+    float energy_sum = 0.0f;
+    int bins = 0;
+
+    for (int bin = 1; bin < FFT_NUM_BINS; bin++) {
+        const float real = _fft_io_buffer[bin * 2];
+        const float imag = _fft_io_buffer[bin * 2 + 1];
+        energy_sum += real * real + imag * imag;
+        bins++;
+
+        if (bin < _band_bin_end[band]) {
+            continue;
+        }
+
+        applyBandEnergy(band, energy_sum, bins);
+        energy_sum = 0.0f;
+        bins = 0;
+        band++;
+    }
+
+    // Trailing bins, in case the band table did not reach the end.
+    if (bins > 0 && band < CONFIG_UI_SPECTRUM_BANDS_NUMS) {
+        applyBandEnergy(band, energy_sum, bins);
+    }
+}
+
+void UiMusicPlayer::applyBandEnergy(int band, float energy_sum, int bins) {
+    // One sqrt per band rather than one per bin: sqrtf is a software routine on
+    // the ESP32's Xtensa core, and this also lets bands react to transients
+    // instead of averaging them away.
+    const float rms = sqrtf(energy_sum / bins);
+    const float dB = 20.0f * log10f(rms + 1e-4f);
+
+    float normalized = dB / 120.0f;
+    if (normalized > 1.0f) normalized = 1.0f;
+    if (normalized < 0.0f) normalized = 0.0f;
+
+    s_current_fft_bands[band] = (int16_t)(normalized * 120.0f);
+}
+
+void UiMusicPlayer::calculateBandEnds(void) {
+    // Logarithmic curve over the bins that actually exist. The previous table
+    // was scaled for 256 bins while only FFT_NUM_BINS of them are produced, so
+    // the top of the spectrum was never summed and the high bands sat at zero.
+    const float base = 1.2f;
+    const int last_bin = FFT_NUM_BINS - 1;
+
+    int last_end = 0;  // Skip bin 0 (DC offset)
 
     for (int b = 0; b < CONFIG_UI_SPECTRUM_BANDS_NUMS; b++) {
-        // Logarithmic progress curve to partition the 256 bins into 64 slices
+        // The last band absorbs everything the curve leaves over.
+        if (b == CONFIG_UI_SPECTRUM_BANDS_NUMS - 1) {
+            _band_bin_end[b] = (uint16_t)last_bin;
+            break;
+        }
+
         float progress = (float)(b + 1) / CONFIG_UI_SPECTRUM_BANDS_NUMS;
-        int current_end_index = (int)roundf(base * powf(256.0f / base, progress));
+        int current_end = (int)roundf(base * powf((float)FFT_NUM_BINS / base, progress));
 
-        // Boundaries safety check
-        if (current_end_index > 256) current_end_index = 256;
-        if (current_end_index <= last_end_index) current_end_index = last_end_index + 1;
+        // Boundaries safety check: every band owns at least one bin.
+        if (current_end > last_bin) current_end = last_bin;
+        if (current_end <= last_end) current_end = last_end + 1;
 
-        // Calculate the width for the current bar
-        _band_widths[b] = current_end_index - last_end_index;
-        
-        // Update marker
-        last_end_index = current_end_index;
+        _band_bin_end[b] = (uint16_t)current_end;
+
+        last_end = current_end;
     }
 }
 
@@ -653,7 +763,7 @@ void UiMusicPlayer::batteryVoltageReadTask() {
             lv_obj_set_style_bg_color(_battery_bar, lv_palette_main(LV_PALETTE_GREEN), 0);
         }
         LvglManager::lvgl_unlock();
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
 

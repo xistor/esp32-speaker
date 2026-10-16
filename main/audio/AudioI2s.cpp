@@ -77,6 +77,7 @@ AudioI2sError AudioI2s::start()
     cfg.thread_name = "i2STask";
     cfg.pin_to_core = 0; 
     cfg.prio = 15; 
+    cfg.stack_size = 1024 * 3;
 
     esp_pthread_set_cfg(&cfg);
 

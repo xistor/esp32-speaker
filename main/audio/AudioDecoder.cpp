@@ -12,6 +12,7 @@ AudioDecoder::AudioDecoder()
     cfg.thread_name = "AudioDecodeTask";
     cfg.pin_to_core = 0; 
     cfg.prio = 15; 
+    cfg.stack_size = 1024 * 3;
 
     esp_pthread_set_cfg(&cfg);
     _decode_task_thread = std::thread(&AudioDecoder::audio_decode_task, this);

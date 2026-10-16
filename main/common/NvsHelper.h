@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "esp_err.h"
 
 /**
  * Thin wrapper around the ESP-IDF NVS blob API so callers don't have to
@@ -15,11 +16,11 @@ namespace NvsHelper {
 
 // Write `len` bytes from `data` under (namespace, key). Silently no-ops on
 // open failure; check the return value of `load` to detect missing keys.
-void save(const char *ns, const char *key, const uint8_t *data, size_t len);
+esp_err_t save(const char *ns, const char *key, const uint8_t *data, size_t len);
 
 // Read up to `len` bytes into `data`. Returns true on success; false if the
 // namespace/key is missing or the read fails.
-bool load(const char *ns, const char *key, uint8_t *data, size_t len);
+esp_err_t load(const char *ns, const char *key, uint8_t *data, size_t len);
 
 } // namespace NvsHelper
 

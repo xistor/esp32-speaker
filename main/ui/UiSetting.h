@@ -2,6 +2,7 @@
 #define __UI_SETTING_H__
 
 #include "lvgl.h"
+#include "Setting.h"
 
 class UiSetting {
 public:
@@ -31,8 +32,8 @@ private:
     void closeSettingPage();
     void updateProtocolView();
 
-    // 当前选中的协议：0-蓝牙(A2DP), 1-AirPlay
-    int _current_protocol = 0;
+    // 当前选中的音频源
+    AudioSource _current_audio_source = AudioSource::A2DP;
 
     lv_obj_t * _setting_page = nullptr;
     lv_obj_t * _audio_source_page = nullptr;

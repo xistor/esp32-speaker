@@ -4,3 +4,5 @@ dependencies:
   espressif/esp_jpeg: "^1.0.5"
   espressif/esp-dsp: "^1.2.0"
   espressif/esp_audio_codec: ^2.4.0
+  espressif/libsodium: "^1.0.22~1"
+  espressif/mdns: "^1.13.1"
