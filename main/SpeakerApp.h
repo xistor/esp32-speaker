@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <functional>
+#include <atomic>
 
 #include "esp_a2dp_api.h"
 #include "esp_bt.h"
@@ -70,6 +71,14 @@ public:
      */
     void configureI2s(const i2s_chan_config_t &chan_cfg,
                       const i2s_std_config_t &std_cfg);
+
+    // Connection indicators for the status bar.
+    bool isBtConnected() const { return _bt_connected.load(); }
+    bool isAirPlayConnected() { return _airplayer.isConnected(); }
+
+    // Applies the Album Art setting to a live Bluetooth link: opens the AVRCP
+    // cover art channel so covers start arriving without reconnecting.
+    void applyAlbumArtSetting(bool enabled);
 
 private:
 
@@ -145,6 +154,22 @@ private:
     const esp_spp_role_t _role_master = ESP_SPP_ROLE_MASTER;
 
     ThreadPool _worker_pool{2};
+
+    // A2DP link state, mirrored for the status bar.
+    std::atomic<bool> _bt_connected{false};
+
+    // AVRCP cover art: whether the peer advertised it and whether the OBEX
+    // channel is up. Tracked so enabling the setting mid-session can open the
+    // channel without waiting for a reconnect.
+    std::atomic<bool> _peer_cover_art_supported{false};
+    std::atomic<bool> _cover_art_connected{false};
+
+    // AVRCP absolute volume (0..127; 90 is the ~-6 dB fallback headroom) and
+    // whether the phone currently has a volume-change notification registered.
+    std::atomic<uint8_t> _a2dp_volume{90};
+    std::atomic<bool> _volume_change_registered{false};
+    // Last time the volume was written to NVS (coalesces slider drags).
+    int64_t _last_volume_save_us = 0;
 
     WifiMgr &_wifi_mgr = WifiMgr::instance();
     AirPlayer _airplayer;

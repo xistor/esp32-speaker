@@ -10,7 +10,8 @@ file(GLOB_RECURSE SOURCES
     "hap/*.cpp"
 )
 idf_component_register(SRCS ${SOURCES}
-                    INCLUDE_DIRS "." "audio" "display" "common" "ui" "network" "hap")
+                    INCLUDE_DIRS "." "audio" "display" "common" "ui" "network" "hap"
+                                 "airplay")
 
 target_compile_options(${COMPONENT_LIB} PRIVATE 
                     $<$<COMPILE_LANGUAGE:CXX>:

@@ -7,5 +7,9 @@
 #define COLOR_SETTING_TITLE_COLOR lv_color_hex(0xFFFFFF)
 #define COLOR_SETTING_TEXT_COLOR lv_color_hex(0x888888)
 
+// 状态栏连接指示：已连接为蓝色高亮，未连接为暗色
+#define COLOR_SOURCE_ON lv_color_hex(0x00A2FF)
+#define COLOR_SOURCE_OFF lv_color_hex(0x3A3A3A)
+
 
 #endif // __COLOR_DEF_H__

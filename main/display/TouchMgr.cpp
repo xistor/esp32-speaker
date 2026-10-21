@@ -2,7 +2,13 @@
 #include "esp_log.h"
 #include "esp_pthread.h"
 
+#include <atomic>
+
 static const char *TAG = "TouchMgr";
+
+// Published before the touch IRQ is enabled. The ISR must not call instance():
+// its function-local static guard takes a FreeRTOS mutex, which is illegal in ISR context.
+static std::atomic<TouchMgr *> s_isr_instance{nullptr};
 
 
 TouchMgr::TouchMgr() {
@@ -23,6 +29,8 @@ TouchMgr &TouchMgr::instance() {
 void TouchMgr::init() {
 
     ESP_LOGI(_TAG_TOUCH, "Initializing TouchMgr...");
+
+    s_isr_instance.store(this, std::memory_order_release);
 
     /* Initilize I2C */
     i2c_master_bus_config_t i2c_config = {
@@ -103,6 +111,8 @@ void TouchMgr::init() {
 
 void TouchMgr::deinit() {
 
+    s_isr_instance.store(nullptr, std::memory_order_release);
+
     _running.store(false);
     if (_touch_read_task_thread.joinable()) {
         _touch_read_task_thread.join();
@@ -126,11 +136,17 @@ void TouchMgr::deinit() {
 
 
 void TouchMgr::touchIntCallback(esp_lcd_touch_handle_t tp) {
-    TouchMgr::instance().handleTouchInt(tp);
-
+    TouchMgr *self = s_isr_instance.load(std::memory_order_acquire);
+    if (self != nullptr) {
+        self->handleTouchInt(tp);
+    }
 }
 
 void TouchMgr::handleTouchInt(esp_lcd_touch_handle_t tp) {
+
+    if (_touch_mux == nullptr) {
+        return;
+    }
 
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xSemaphoreGiveFromISR(_touch_mux, &xHigherPriorityTaskWoken);

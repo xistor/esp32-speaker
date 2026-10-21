@@ -5,6 +5,18 @@ menu "X Speaker Configuration"
         help
             Use this option to set local device name.
 
+    config AIRPLAY_ENABLE_ARTWORK
+        bool "Receive AirPlay cover art"
+        default n
+        help
+            Advertise artwork support in the RAOP mDNS record and decode
+            cover art sent by the AirPlay sender. Some senders resend a large
+            JPEG with every metadata/lyric update, which can delay volume
+            changes and cause audio drop-outs. Enable only if cover art is
+            more important than playback responsiveness. When enabled, the
+            receiver always advertises artwork support; the "Album Art"
+            switch on the settings page only toggles local display/decoding.
+
 
 # "I2S pin configuration"
     config I2S_LRCK_PIN

@@ -1,7 +1,10 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "UiMusicPlayer.h"
+#include "Setting.h"
 #include "LvglManager.h"
+#include "SpeakerApp.h"
+#include "colorDef.h"
 #include <cmath>
 #include <cstring>
 #include "esp_dsp.h"
@@ -83,16 +86,149 @@ UiMusicPlayer::~UiMusicPlayer()
 
 }
 
+namespace {
+/* Geometry of bar `index` for a given height, shared by the renderer and by
+ * the dirty-area calculation so the two can never disagree. */
+void spectrumBarRect(const lv_area_t *coords, int32_t index, int32_t bar_h,
+                     lv_area_t *rect)
+{
+    const int32_t bands = CONFIG_UI_SPECTRUM_BANDS_NUMS;
+    int32_t slot = lv_area_get_width(coords) / bands;
+    if(slot < 1) {
+        slot = 1;
+    }
+    const int32_t bar_width = (slot > 1) ? (slot - 1) : 1;
+    // Centre the bar block when the width does not divide evenly, so the
+    // leftover pixels are split instead of dumped on one side.
+    const int32_t leftover = lv_area_get_width(coords) - slot * bands;
+
+    rect->x1 = coords->x1 + leftover / 2 + index * slot;
+    rect->x2 = rect->x1 + bar_width - 1;
+    rect->y2 = coords->y2;
+    rect->y1 = rect->y2 - bar_h + 1;
+}
+} // namespace
+
 void UiMusicPlayer::sp_timer_cb(lv_timer_t * timer) {
 
-    for(int i = 0; i < CONFIG_UI_SPECTRUM_BANDS_NUMS; i++) {
-            lv_obj_set_height(UiMusicPlayer::instance()._band_objs[i], (int32_t)UiMusicPlayer::instance().s_current_fft_bands[i]);
+    UiMusicPlayer &self = UiMusicPlayer::instance();
+    if(self._sp_cont == nullptr) {
+        return;
     }
 
+    // The levels are published by the FFT task in bursts; easing towards them
+    // here (rather than snapping the widget height to each new value) is what
+    // makes the spectrum look continuous. dt is measured so the motion stays
+    // identical when LVGL's timer handler is late.
+    int64_t now = esp_timer_get_time();
+    float dt = (self._sp_last_us == 0)
+                   ? 0.033f
+                   : (float)(now - self._sp_last_us) / 1000000.0f;
+    self._sp_last_us = now;
+    if(dt < 0.004f) dt = 0.004f;
+    if(dt > 0.100f) dt = 0.100f;
+
+    constexpr float kAttackTau = 0.030f;   // ~90 % of a jump in 70 ms
+    constexpr float kReleaseTau = 0.180f;  // VU-meter-like fall
+
+    lv_area_t coords;
+    lv_obj_get_coords(self._sp_cont, &coords);
+    const int32_t max_height = lv_area_get_height(&coords);
+
+    lv_area_t dirty = {};
+    bool has_dirty = false;
+
+    for(int i = 0; i < CONFIG_UI_SPECTRUM_BANDS_NUMS; i++) {
+        float target = (float)self.s_current_fft_bands[i];
+        if(target > (float)max_height) target = (float)max_height;
+        if(target < 2.0f) target = 0.0f;   // gate the noise floor
+
+        float current = self._sp_bar_h[i];
+        const float tau = (target > current) ? kAttackTau : kReleaseTau;
+        const float alpha = 1.0f - expf(-dt / tau);
+
+        float next = current + (target - current) * alpha;
+        if(next < 0.5f) next = 0.0f;
+        self._sp_bar_h[i] = next;
+
+        const int32_t px = (int32_t)(next + 0.5f);
+        const int32_t drawn = self._sp_drawn_h[i];
+        if(px == drawn) {
+            continue;
+        }
+        self._sp_drawn_h[i] = (int16_t)px;
+
+        // Only the strip between the old and the new top changed: everything
+        // below min(old, new) is still covered by the bar.
+        const int32_t lo = (px < drawn) ? px : drawn;
+        const int32_t hi = (px > drawn) ? px : drawn;
+        lv_area_t hi_rect, lo_rect;
+        spectrumBarRect(&coords, i, hi, &hi_rect);
+        spectrumBarRect(&coords, i, lo, &lo_rect);
+
+        lv_area_t band;
+        band.x1 = hi_rect.x1;
+        band.x2 = hi_rect.x2;
+        band.y1 = hi_rect.y1;
+        band.y2 = (lo > 0) ? lo_rect.y1 - 1 : coords.y2;
+
+        if(!has_dirty) {
+            dirty = band;
+            has_dirty = true;
+        } else {
+            dirty.x1 = LV_MIN(dirty.x1, band.x1);
+            dirty.y1 = LV_MIN(dirty.y1, band.y1);
+            dirty.x2 = LV_MAX(dirty.x2, band.x2);
+            dirty.y2 = LV_MAX(dirty.y2, band.y2);
+        }
+    }
+
+    if(has_dirty) {
+        // Invalidating only the changed strip keeps the number of clip
+        // regions (and therefore draw calls) small.
+        lv_obj_invalidate_area(self._sp_cont, &dirty);
+    }
 }
 
-void UiMusicPlayer::statusBarGestureCb(lv_event_t * e)
+void UiMusicPlayer::spectrumDrawEventCb(lv_event_t * e)
 {
+    UiMusicPlayer &self = UiMusicPlayer::instance();
+
+    lv_obj_t *obj = lv_event_get_target_obj(e);
+    lv_layer_t *layer = lv_event_get_layer(e);
+    if(obj == nullptr || layer == nullptr) {
+        return;
+    }
+
+    lv_area_t coords;
+    lv_obj_get_coords(obj, &coords);
+    const int32_t height = lv_area_get_height(&coords);
+    if(height <= 0) {
+        return;
+    }
+
+    lv_draw_rect_dsc_t dsc;
+    lv_draw_rect_dsc_init(&dsc);
+    dsc.bg_color = lv_color_hex(0x00A2FF);
+    dsc.bg_opa = LV_OPA_COVER;
+    dsc.radius = 0;
+
+    for(int32_t i = 0; i < CONFIG_UI_SPECTRUM_BANDS_NUMS; i++) {
+        int32_t bar = self._sp_drawn_h[i];
+        if(bar <= 0) {
+            continue;
+        }
+        if(bar > height) {
+            bar = height;
+        }
+
+        lv_area_t rect;
+        spectrumBarRect(&coords, i, bar, &rect);
+        lv_draw_rect(layer, &dsc, &rect);
+    }
+}
+
+void UiMusicPlayer::statusBarGestureCb(lv_event_t * e){
     ESP_LOGI(_MP_TAG, "Status bar gesture detected");
 
     lv_indev_t * indev = lv_indev_active();
@@ -102,6 +238,31 @@ void UiMusicPlayer::statusBarGestureCb(lv_event_t * e)
     if(lv_indev_get_gesture_dir(indev) == LV_DIR_BOTTOM) {
         ESP_LOGI(_MP_TAG, "Swipe down on status bar, opening settings page");
         UiMusicPlayer::instance()._ui_setting.createSettingPage();
+    }
+}
+
+void UiMusicPlayer::statusTimerCb(lv_timer_t * timer)
+{
+    UiMusicPlayer &self = UiMusicPlayer::instance();
+    if(self._bt_icon == nullptr || self._airplay_icon == nullptr) {
+        return;
+    }
+
+    SpeakerApp &app = SpeakerApp::instance();
+    const bool bt = app.isBtConnected();
+    const bool airplay = app.isAirPlayConnected();
+
+    // Writing a local style on a label wakes the LVGL renderer, so only touch
+    // the widgets when the state actually flips.
+    if(bt != self._bt_connected_shown) {
+        self._bt_connected_shown = bt;
+        lv_obj_set_style_text_color(self._bt_icon,
+                                    bt ? COLOR_SOURCE_ON : COLOR_SOURCE_OFF, 0);
+    }
+    if(airplay != self._airplay_connected_shown) {
+        self._airplay_connected_shown = airplay;
+        lv_obj_set_style_text_color(self._airplay_icon,
+                                    airplay ? COLOR_SOURCE_ON : COLOR_SOURCE_OFF, 0);
     }
 }
 
@@ -146,6 +307,20 @@ void UiMusicPlayer::main_page()
     lv_obj_remove_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(status_bar, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(status_bar, statusBarGestureCb, LV_EVENT_GESTURE, NULL);
+
+    // 1.0.1 连接状态：蓝牙 / AirPlay。图标随状态由 statusTimerCb 刷新，
+    //       作为 status_bar 的子对象，滑动仍然能触发下拉设置。
+    //       注意不要用 awesome_14：它只包含 0xF000-0xF0FF，而这两个符号
+    //       在 0xF1EB / 0xF293，只有内置的 Montserrat 14 才有对应字形。
+    _bt_icon = lv_label_create(status_bar);
+    lv_label_set_text(_bt_icon, LV_SYMBOL_BLUETOOTH);
+    lv_obj_set_style_text_color(_bt_icon, COLOR_SOURCE_OFF, 0);
+    lv_obj_align(_bt_icon, LV_ALIGN_RIGHT_MID, -64, 0);
+
+    _airplay_icon = lv_label_create(status_bar);
+    lv_label_set_text(_airplay_icon, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_color(_airplay_icon, COLOR_SOURCE_OFF, 0);
+    lv_obj_align(_airplay_icon, LV_ALIGN_RIGHT_MID, -34, 0);
 
     // 1.1 battery
     _battery_area = lv_obj_create(_main_page);
@@ -216,33 +391,22 @@ void UiMusicPlayer::main_page()
     lv_obj_set_style_bg_color(_sp_cont, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(_sp_cont, LV_OPA_COVER, LV_PART_MAIN);
 
-    lv_obj_set_layout(_sp_cont, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(_sp_cont, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(_sp_cont, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-
     lv_obj_remove_flag(_sp_cont, LV_OBJ_FLAG_SCROLLABLE);
 
-    int bar_width = _sp_cont_width / CONFIG_UI_SPECTRUM_BANDS_NUMS;
-
-    for(int i = 0; i < CONFIG_UI_SPECTRUM_BANDS_NUMS; i++) {
-        _band_objs[i] = lv_obj_create(_sp_cont);
-
-        lv_obj_set_style_pad_all(_band_objs[i], 0, LV_PART_MAIN);
-        lv_obj_set_style_border_width(_band_objs[i], 0, LV_PART_MAIN);
-        
-        lv_obj_set_size(_band_objs[i], bar_width, 4); 
-        
-        lv_obj_set_style_radius(_band_objs[i], 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_color(_band_objs[i], lv_color_hex(0x00A2FF), LV_PART_MAIN); 
-        
-        lv_obj_remove_flag(_band_objs[i], LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(_band_objs[i], LV_OBJ_FLAG_CLICKABLE);
-    }
+    // All bars are painted by one draw callback. Twenty-four child objects
+    // meant a flex re-layout plus 24 style writes on every animation frame,
+    // which showed up as visible stepping on this CPU.
+    lv_obj_add_event_cb(_sp_cont, spectrumDrawEventCb, LV_EVENT_DRAW_MAIN, NULL);
 
     lv_obj_add_flag(_sp_cont, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(_sp_cont, visual_switch_event_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_timer_create(sp_timer_cb, 33, NULL);
+    // 20 fps is smooth enough for the bars and leaves the software renderer
+    // time to finish text glyphs; the earlier 30 ms period kept swdraw busy
+    // almost continuously and starved IDLE0 (task watchdog).
+    lv_timer_create(sp_timer_cb, 50, NULL);
+    // 连接状态一秒轮询一次即可，避免为每次 A2DP/RTSP 事件添加回调链
+    lv_timer_create(statusTimerCb, 1000, NULL);
     lv_obj_add_flag(_sp_cont, LV_OBJ_FLAG_HIDDEN); 
 
     // 3. Song Title - Positioned BELOW Album Art
@@ -250,7 +414,11 @@ void UiMusicPlayer::main_page()
     lv_label_set_text(_title, "No Song Playing");
     lv_obj_set_width(_title, CONFIG_LCD_H_RES);
     lv_obj_set_style_text_color(_title, lv_color_hex(0xFFFFFF), 0);
-    lv_label_set_long_mode(_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    // Plain truncation instead of a circular scroll: the scrolling label is
+    // an animation that redraws itself every refresh, and with QQ Music
+    // pushing a new lyric line into the title every couple of seconds that
+    // kept the software renderer busy non-stop on this CPU.
+    lv_label_set_long_mode(_title, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(_title, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(_title, &awesome_14, 0);
     lv_obj_align_to(_title, _sp_cont, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
@@ -343,6 +511,8 @@ void UiMusicPlayer::main_page()
     _fft_process_thread = std::thread(&UiMusicPlayer::fftProcessingTask, this);
     _visual_type = visualType::ALBUM_ART;
 
+    // Apply the persisted preference now that the visual widgets exist.
+    setAlbumArtEnabled(Setting::instance().getShowAlbumArt());
 }
 
 void UiMusicPlayer::setTitle(const char *title)
@@ -352,7 +522,7 @@ void UiMusicPlayer::setTitle(const char *title)
         return;
     }
 
-    if(_title) {
+    if(_title && strcmp(lv_label_get_text(_title), title) != 0) {
         lv_label_set_text(_title, title);
     }
     LvglManager::lvgl_unlock();
@@ -365,7 +535,7 @@ void UiMusicPlayer::setArtist(const char *artist)
         return;
     }
 
-    if(_artist) {
+    if(_artist && strcmp(lv_label_get_text(_artist), artist) != 0) {
         lv_label_set_text(_artist, artist);
     }
     LvglManager::lvgl_unlock();
@@ -379,10 +549,36 @@ void UiMusicPlayer::setPlaying(bool playing)
         return;
     }
 
-    if(playing) {
-        lv_label_set_text(_play_label, LV_SYMBOL_PAUSE);
-    } else {
-        lv_label_set_text(_play_label, LV_SYMBOL_PLAY);
+    if(_play_label != nullptr) {
+        lv_label_set_text(_play_label, playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+    }
+
+    LvglManager::lvgl_unlock();
+}
+
+void UiMusicPlayer::setAlbumArtEnabled(bool enabled)
+{
+    _album_art_enabled.store(enabled);
+
+    if(enabled) {
+        // The widget keeps whatever it shows now; the next cover art frame
+        // replaces it when the sender delivers one.
+        return;
+    }
+
+    // Turning cover art off must not change the player layout: the album art
+    // area stays on screen and simply falls back to the bundled placeholder.
+    if(LvglManager::lvgl_lock(100) == false) {
+        ESP_LOGW(_MP_TAG, "Failed to acquire LVGL lock to reset cover art");
+        return;
+    }
+
+    if(_album_art != nullptr) {
+        const uint32_t scale = (130 * LV_SCALE_NONE) / 200;
+        lv_image_set_scale(_album_art, scale);
+        lv_image_set_pivot(_album_art, 100, 100);
+        lv_image_set_src(_album_art, &default_albumart);
+        lv_obj_invalidate(_album_art);
     }
 
     LvglManager::lvgl_unlock();
@@ -390,18 +586,41 @@ void UiMusicPlayer::setPlaying(bool playing)
 
 void UiMusicPlayer::setCoverArt(const uint8_t *p_data)
 {
-    if(LvglManager::lvgl_lock(_lock_timeout_ms) == false) {
-        ESP_LOGE(_MP_TAG, "Failed to acquire LVGL lock to set cover art");
+    setCoverArt(p_data, 200, 200);
+}
+
+void UiMusicPlayer::setCoverArt(const uint8_t *p_data, uint16_t width,
+                                uint16_t height)
+{
+    if (p_data == nullptr || width == 0 || height == 0) {
+        return;
+    }
+    // Cover art is turned off: the widget is hidden, so drop the frame and
+    // spare the renderer the work.
+    if (!_album_art_enabled.load()) {
+        return;
+    }
+    // Cosmetic: skip the frame rather than block the decode worker behind a
+    // busy renderer.
+    if(LvglManager::lvgl_lock(100) == false) {
+        ESP_LOGW(_MP_TAG, "Failed to acquire LVGL lock to set cover art");
         return;
     }
     _cover_img_dsc.header.magic  = LV_IMAGE_HEADER_MAGIC;
     _cover_img_dsc.header.cf = LV_COLOR_FORMAT_RGB565_SWAPPED;
-    _cover_img_dsc.header.w = 200;
-    _cover_img_dsc.header.h = 200;
-    _cover_img_dsc.data_size = 200 * 200 * sizeof(uint16_t);
+    _cover_img_dsc.header.w = width;
+    _cover_img_dsc.header.h = height;
+    _cover_img_dsc.data_size = static_cast<uint32_t>(width) * height * sizeof(uint16_t);
     _cover_img_dsc.data = p_data;
-        
+
     if(_album_art) {
+        // The widget is 130x130. Cover art decoded at 130x130 needs no
+        // scaling; the 200x200 Bluetooth path keeps the old 0.65x factor.
+        uint32_t scale = (130 * LV_SCALE_NONE) / width;
+        if(scale > LV_SCALE_NONE) {
+            scale = LV_SCALE_NONE;
+        }
+        lv_image_set_scale(_album_art, scale);
         lv_image_set_src(_album_art, &_cover_img_dsc);
         lv_obj_invalidate(_album_art);
     } else {
@@ -419,14 +638,46 @@ void UiMusicPlayer::setPlayTime(uint32_t play_time_ms)
     }
     _song_play_time_ms = play_time_ms;
 
-    lv_slider_set_range(_play_slider, 0, (int32_t)_song_play_time_ms);
+    if(_play_slider != nullptr) {
+        lv_slider_set_range(_play_slider, 0, (int32_t)_song_play_time_ms);
+    }
+    LvglManager::lvgl_unlock();
+}
+
+void UiMusicPlayer::applyMetadata(const char *title, const char *artist, int durationMs)
+{
+    // Metadata is disposable and frequently updated by lyric-capable senders.
+    // Do not block the artwork/UI worker for the full lock timeout.
+    if(LvglManager::lvgl_lock(100) == false) {
+        ESP_LOGD(_MP_TAG, "Skipping metadata update, renderer busy");
+        return;
+    }
+
+    // Senders such as QQ Music repeat the same title/artist around lyric
+    // lines. Re-setting identical text invalidates the label and makes the
+    // software renderer redo expensive CJK glyph lookups.
+    if(title && _title && strcmp(lv_label_get_text(_title), title) != 0) {
+        lv_label_set_text(_title, title);
+    }
+    if(artist && _artist && strcmp(lv_label_get_text(_artist), artist) != 0) {
+        lv_label_set_text(_artist, artist);
+    }
+    if(durationMs >= 0) {
+        _song_play_time_ms = static_cast<uint32_t>(durationMs);
+        if(_play_slider != nullptr) {
+            lv_slider_set_range(_play_slider, 0, (int32_t)_song_play_time_ms);
+        }
+    }
+
     LvglManager::lvgl_unlock();
 }
 
 void UiMusicPlayer::setPlayPosition(uint32_t play_pos_ms)
 {
-    if(LvglManager::lvgl_lock(_lock_timeout_ms) == false) {
-        ESP_LOGE(_MP_TAG, "Failed to acquire LVGL lock to set play position");
+    // Progress arrives several times per second and is disposable: never let
+    // it block the worker for the full 500 ms lock timeout, otherwise a busy
+    // renderer starves the same task that decodes cover art.
+    if(LvglManager::lvgl_lock(50) == false) {
         return;
     }
 
@@ -486,6 +737,11 @@ void UiMusicPlayer::handleVisualSwitchEvent(lv_event_t * e)
     if (_visual_type == visualType::ALBUM_ART) {
         lv_obj_add_flag(_album_art, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(_sp_cont, LV_OBJ_FLAG_HIDDEN);
+        // Start from a flat baseline instead of the levels frozen when the
+        // spectrum was last visible.
+        memset(_sp_bar_h, 0, sizeof(_sp_bar_h));
+        memset(_sp_drawn_h, 0, sizeof(_sp_drawn_h));
+        _sp_last_us = 0;
         _visual_type = visualType::SPECTRUM;
     } else if (_visual_type == visualType::SPECTRUM) {
         lv_obj_clear_flag(_album_art, LV_OBJ_FLAG_HIDDEN);
@@ -568,6 +824,7 @@ void UiMusicPlayer::fftProcessingTask() {
 
     int block_samples = 0;   // stereo samples currently held in _fft_block
     int64_t last_frame_us = 0;
+    int64_t last_data_us = esp_timer_get_time();
 
     while (_fft_running.load()) {
 
@@ -577,8 +834,14 @@ void UiMusicPlayer::fftProcessingTask() {
         uint8_t *item = static_cast<uint8_t *>(
             xRingbufferReceive(_ringbuf_fft, &item_size, pdMS_TO_TICKS(100)));
         if (item == nullptr || item_size == 0) {
+            // Paused, disconnected, or between tracks: let the bars fall
+            // instead of freezing at the last analysed frame.
+            if ((esp_timer_get_time() - last_data_us) > 300000) {
+                memset(s_current_fft_bands, 0, sizeof(s_current_fft_bands));
+            }
             continue;
         }
+        last_data_us = esp_timer_get_time();
 
         // Whole stereo int16 frames only; a trailing partial frame would
         // desync the accumulator.
@@ -650,7 +913,7 @@ void UiMusicPlayer::processFftBlock() {
             continue;
         }
 
-        applyBandEnergy(band, energy_sum, bins);
+        applyBandEnergy(band, energy_sum);
         energy_sum = 0.0f;
         bins = 0;
         band++;
@@ -658,22 +921,83 @@ void UiMusicPlayer::processFftBlock() {
 
     // Trailing bins, in case the band table did not reach the end.
     if (bins > 0 && band < CONFIG_UI_SPECTRUM_BANDS_NUMS) {
-        applyBandEnergy(band, energy_sum, bins);
+        applyBandEnergy(band, energy_sum);
     }
+
+    publishBandLevels();
 }
 
-void UiMusicPlayer::applyBandEnergy(int band, float energy_sum, int bins) {
-    // One sqrt per band rather than one per bin: sqrtf is a software routine on
-    // the ESP32's Xtensa core, and this also lets bands react to transients
-    // instead of averaging them away.
-    const float rms = sqrtf(energy_sum / bins);
-    const float dB = 20.0f * log10f(rms + 1e-4f);
+void UiMusicPlayer::applyBandEnergy(int band, float energy_sum) {
+    // Total energy in the band, not the per-bin average. The log-spaced bands
+    // hold a growing number of bins towards the top (1 bin at the bottom, ~28
+    // at the top), so averaging divided the high bands by their own width and
+    // made them read far lower than the low ones; summed band power matches
+    // what a hardware spectrum analyser shows. A single-bin tone is unaffected.
+    //
+    // Undo the FFT and Hann-window gain here so the result is comparable with
+    // the PCM full scale: a bin-centred sine of amplitude A yields |X| = A*N/4.
+    const float band_amplitude = sqrtf(energy_sum);
+    _band_amp[band] = band_amplitude * (4.0f / (float)FFT_SIZE);
+}
 
-    float normalized = dB / 120.0f;
-    if (normalized > 1.0f) normalized = 1.0f;
-    if (normalized < 0.0f) normalized = 0.0f;
+void UiMusicPlayer::publishBandLevels() {
+    constexpr float kFullScale = 32768.0f;
+    // Peak band amplitude of loud, full-scale material. Anything at or above
+    // this is displayed as-is; quieter streams are lifted towards it.
+    constexpr float kRefAmp = 5200.0f;
+    // Both sources are analysed before their output volume stage (AirPlay
+    // scales in its pipeline, A2DP in the I2S task), so the input level is
+    // independent of the listening volume. Allow enough make-up gain for
+    // quiet material; the noise gate below stops it amplifying hiss.
+    constexpr float kMaxGain = 24.0f;     // up to ~+27 dB
+    constexpr float kSilenceAmp = 60.0f;  // ~-55 dBFS
+    constexpr float kDisplayGainDb = 6.0f;
+    constexpr float kFloorDb = -60.0f;
+    constexpr int32_t kBarMax = 120;
 
-    s_current_fft_bands[band] = (int16_t)(normalized * 120.0f);
+    float peak = 0.0f;
+    for (int i = 0; i < CONFIG_UI_SPECTRUM_BANDS_NUMS; i++) {
+        if (_band_amp[i] > peak) {
+            peak = _band_amp[i];
+        }
+    }
+
+    // Fade the display out below the gate instead of switching it off: a hard
+    // threshold combined with the make-up gain below would make fading tracks
+    // pop from 0 px straight to mid-height.
+    float silence_scale = 1.0f;
+    if (peak < kSilenceAmp) {
+        silence_scale = peak / kSilenceAmp;
+    } else {
+        // Slow level tracking. The bars must not follow the volume, and the
+        // input level differs wildly between tracks. Normalising against a
+        // slow peak makes quiet and loud material look the same; the release
+        // is short enough that a level change settles in under a second, and
+        // long enough not to squash the dynamics inside a track.
+        constexpr float kAttackAlpha = 0.25f;   // ~65 ms to catch a louder stream
+        constexpr float kReleaseAlpha = 0.02f;  // ~0.8 s to settle back down
+        const float alpha = (peak > _agc_peak) ? kAttackAlpha : kReleaseAlpha;
+        _agc_peak += (peak - _agc_peak) * alpha;
+    }
+
+    float gain = kRefAmp / _agc_peak;
+    if (gain < 1.0f) gain = 1.0f;
+    if (gain > kMaxGain) gain = kMaxGain;
+    gain *= silence_scale;
+
+    for (int i = 0; i < CONFIG_UI_SPECTRUM_BANDS_NUMS; i++) {
+        const float amplitude = _band_amp[i] * gain;
+        const float dbfs =
+            20.0f * log10f(amplitude / kFullScale + 1e-9f) + kDisplayGainDb;
+
+        // Map the musically useful -60..0 dBFS range onto the whole bar, so
+        // the level has an absolute reference instead of hugging the top.
+        float normalized = (dbfs - kFloorDb) * (-1.0f / kFloorDb);
+        if (normalized > 1.0f) normalized = 1.0f;
+        if (normalized < 0.0f) normalized = 0.0f;
+
+        s_current_fft_bands[i] = (int16_t)(normalized * kBarMax);
+    }
 }
 
 void UiMusicPlayer::calculateBandEnds(void) {
@@ -745,8 +1069,10 @@ void UiMusicPlayer::batteryVoltageReadTask() {
         char voltage_str[32];
         snprintf(voltage_str, sizeof(voltage_str), "%d%%", percentage);
 
-        if(LvglManager::lvgl_lock(_lock_timeout_ms) == false) {
-            ESP_LOGE(_MP_TAG, "Failed to acquire LVGL lock to set play position");
+        // Battery level is cosmetic: never block the renderer for the full
+        // lock timeout, and back off instead of retrying in a tight loop.
+        if(LvglManager::lvgl_lock(50) == false) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
         int target_width = (percentage * 16) / 100;

@@ -5,10 +5,36 @@
 #include "NvsHelper.h"
 #include <cstring>
 #include "esp_spiffs.h"
+#include "esp_timer.h"
 #include "jpeg_decoder.h"
 #include "esp_a2dp_api.h"
 #include "WebServer.h"
 #include "AirPlayer.h"
+
+namespace {
+
+// Phones that use their own local A2DP attenuation never send an AVRCP
+// absolute-volume command. Apply a fixed headroom in that case: the phone's
+// lowest step is still too loud on this board. Phones that do control the
+// sink leave this path as soon as they send their first volume command.
+// Coalesce AVRCP absolute-volume updates into at most one NVS write per
+// interval: a slider drag sends one command per step and every write costs a
+// flash commit. The final value is flushed when the link goes down.
+constexpr int64_t kVolumeSaveIntervalUs = 2000000; // 2 s
+
+// AVRCP reports volume as 0..127. Use a square-law curve so the low end of
+// the phone slider gives useful attenuation and 0 is true silence; 127 maps
+// to unity gain.
+int32_t avrcVolumeToQ15(uint8_t volume)
+{
+    constexpr uint32_t kMaxVolume = 127;
+    const uint32_t value = volume > kMaxVolume ? kMaxVolume : volume;
+    constexpr uint32_t kMaxSquared = kMaxVolume * kMaxVolume;
+    return static_cast<int32_t>(
+        (value * value * 32768u + kMaxSquared / 2) / kMaxSquared);
+}
+
+} // namespace
 
 SpeakerApp::SpeakerApp()
     : _audio_i2s() // default-constructed; configuration later
@@ -27,6 +53,21 @@ void SpeakerApp::a2dInit() {
     assert(esp_avrc_ct_init() == ESP_OK);
     esp_avrc_tg_register_callback(rcTgCallback);
     assert(esp_avrc_tg_init() == ESP_OK);
+
+    // Advertise volume-change notifications; without this the phone's
+    // absolute-volume commands are accepted by the stack but the TG rejects
+    // our notification responses.
+    esp_avrc_rn_evt_cap_mask_t volume_evt = {};
+    esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &volume_evt,
+                                       ESP_AVRC_RN_VOLUME_CHANGE);
+    ESP_ERROR_CHECK(esp_avrc_tg_set_rn_evt_cap(&volume_evt));
+
+    // Until the phone proves it controls the sink volume, apply the level it
+    // last used (defaults to the ~-6 dB headroom for phones that only
+    // attenuate locally).
+    const uint8_t savedVolume = Setting::instance().getA2dpVolume();
+    _a2dp_volume.store(savedVolume);
+    _audio_i2s.setOutputVolumeQ15(avrcVolumeToQ15(savedVolume));
 
     ESP_ERROR_CHECK(esp_a2d_sink_init());
 
@@ -129,6 +170,10 @@ esp_err_t SpeakerApp::init()
     // configure the GPIO pin for mute control
     gpio_reset_pin((gpio_num_t)CONFIG_XSMT_PIN);
     gpio_set_direction((gpio_num_t)CONFIG_XSMT_PIN, GPIO_MODE_OUTPUT);
+    // The amplifier enable/mute pin is active-high on this board. Without
+    // this the DAC stays muted until AVRCP explicitly unmutes it, which
+    // never happens in AirPlay mode.
+    gpio_set_level((gpio_num_t)CONFIG_XSMT_PIN, 1);
 
     /* initialize NVS — it is used to store PHY calibration data */
     err = nvs_flash_init();
@@ -149,6 +194,9 @@ esp_err_t SpeakerApp::init()
         bluetoothInit();
     } else if (audio_src == AudioSource::AIRPLAY) {
         ESP_LOGI(_XSPK_TAG, "Initializing AirPlay mDNS");
+        // AirPlay applies its own volume in the audio pipeline; keep the
+        // shared I2S output stage at unity gain.
+        _audio_i2s.setOutputVolumeQ15(32768);
         esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
 
         _wifi_mgr.init();
@@ -157,10 +205,14 @@ esp_err_t SpeakerApp::init()
         if (http_err != ESP_OK) {
             ESP_LOGE(_XSPK_TAG, "Web server failed to start: %s", esp_err_to_name(http_err));
         }
-        _airplayer.init();
-        esp_err_t mdns_err = _airplayer.bonjour();
-        if (mdns_err != ESP_OK) {
-            ESP_LOGE(_XSPK_TAG, "AirPlay mDNS failed to start: %s", esp_err_to_name(mdns_err));
+        esp_err_t airplay_err = _airplayer.init(&_audio_i2s);
+        if (airplay_err != ESP_OK) {
+            ESP_LOGE(_XSPK_TAG, "AirPlay init failed: %s", esp_err_to_name(airplay_err));
+        } else {
+            airplay_err = _airplayer.start();
+            if (airplay_err != ESP_OK) {
+                ESP_LOGE(_XSPK_TAG, "AirPlay start failed: %s", esp_err_to_name(airplay_err));
+            }
         }
 
     } else {
@@ -315,11 +367,22 @@ void SpeakerApp::handleA2dpEvent(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *p
 
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED) {
             ESP_LOGI(_XSPK_TAG, "A2DP connected, set scan mode to non-connectable and non-discoverable, enable I2S channel");
+            _bt_connected.store(true);
             setScanModeConnectable(false, false);
             NvsHelper::save("bt_storage", "last_mac", param->conn_stat.remote_bda, sizeof(esp_bd_addr_t));
 
         } else if (param->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
             ESP_LOGI(_XSPK_TAG, "A2DP disconnected, set scan mode to connectable and discoverable, disable I2S channel");
+            _bt_connected.store(false);
+            // Flush the level this phone last set before the stack is torn
+            // down and a2dInit() re-applies the persisted value.
+            Setting::instance().setA2dpVolume(_a2dp_volume.load());
+            _last_volume_save_us = esp_timer_get_time();
+            // The OBEX cover art channel dies with the link; forget it and the
+            // last image handle so the next connection fetches artwork again.
+            _peer_cover_art_supported.store(false);
+            _cover_art_connected.store(false);
+            memset(_cover_image_handler, 0, sizeof(_cover_image_handler));
 #ifdef CONFIG_BT_A2DP_USE_EXTERNAL_CODEC
             _audio_decoder.decoderDataFlush();
 #endif
@@ -639,7 +702,9 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
                 case ESP_AVRC_RN_TRACK_CHANGE:
                     esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_PLAYING_TIME);
                     esp_avrc_ct_send_register_notification_cmd(allocTransactionLabel(), ESP_AVRC_RN_TRACK_CHANGE, 0);
-                    esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_COVER_ART);
+                    if (Setting::instance().getShowAlbumArt()) {
+                        esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_COVER_ART);
+                    }
                     break;
                 case ESP_AVRC_RN_PLAY_STATUS_CHANGE:
                     ESP_LOGI(_XSPK_TAG, "Playback status changed: 0x%x", param->change_ntf.event_parameter.playback);
@@ -666,12 +731,17 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
         }
         case ESP_AVRC_CT_GET_RN_CAPABILITIES_RSP_EVT: {
             /* request the cover art */
-            esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_COVER_ART);
+            if (Setting::instance().getShowAlbumArt()) {
+                esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_COVER_ART);
+            }
             break;
         }
         case ESP_AVRC_CT_REMOTE_FEATURES_EVT: {
             ESP_LOGI(_XSPK_TAG, "AVRC remote features %" PRIx32", TG features %x", param->rmt_feats.feat_mask, param->rmt_feats.tg_feat_flag);
-            if ((param->rmt_feats.tg_feat_flag & ESP_AVRC_FEAT_FLAG_TG_COVER_ART)) {
+            const bool peerCoverArt =
+                (param->rmt_feats.tg_feat_flag & ESP_AVRC_FEAT_FLAG_TG_COVER_ART) != 0;
+            _peer_cover_art_supported.store(peerCoverArt);
+            if (peerCoverArt && Setting::instance().getShowAlbumArt()) {
                 ESP_LOGW(_XSPK_TAG, "Peer support Cover Art feature");
                 /* start the cover art connection */
                 esp_avrc_ct_cover_art_connect(1024);
@@ -679,10 +749,15 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
             break;
         }
         case ESP_AVRC_CT_COVER_ART_STATE_EVT: {
-            if (param->cover_art_state.state == ESP_AVRC_COVER_ART_CONNECTED) {
+            const bool connected =
+                param->cover_art_state.state == ESP_AVRC_COVER_ART_CONNECTED;
+            _cover_art_connected.store(connected);
+            if (connected) {
                 ESP_LOGW(_XSPK_TAG, "Cover Art Client connected");
                 /* request the cover art */
-                esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_COVER_ART);
+                if (Setting::instance().getShowAlbumArt()) {
+                    esp_avrc_ct_send_metadata_cmd(allocTransactionLabel(), ESP_AVRC_MD_ATTR_COVER_ART);
+                }
             } else {
                 ESP_LOGW(_XSPK_TAG, "Cover Art Client disconnected, reason:%d", param->cover_art_state.reason);
             }
@@ -695,6 +770,12 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
 
             if ( param->cover_art_data.final) {
                 ESP_LOGI(_XSPK_TAG, "Final cover art data received, total size: %d", _cover_image_size);
+
+                // Cover art can still arrive for a request issued before the
+                // setting was turned off; skip the decode in that case.
+                if (!Setting::instance().getShowAlbumArt()) {
+                    break;
+                }
 
                 /* decode and display the image */
                 if(_cover_pixels) {
@@ -739,8 +820,62 @@ void SpeakerApp::handleRcCtrlEvent(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_
 
 void SpeakerApp::handleRcTgEvent(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param)
 {
-    ESP_LOGI(_XSPK_TAG, "AVRCP Target event: %d", event);
-    // Handle AVRCP target events here (e.g., connection state changes, passthrough responses, etc.)
+    switch (event) {
+    case ESP_AVRC_TG_SET_ABSOLUTE_VOLUME_CMD_EVT: {
+        const uint8_t volume = param->set_abs_vol.volume;
+        _a2dp_volume.store(volume);
+        _audio_i2s.setOutputVolumeQ15(avrcVolumeToQ15(volume));
+        ESP_LOGD(_XSPK_TAG, "AVRCP absolute volume: %u/127",
+                 static_cast<unsigned>(volume));
+
+        // Persist the level, but coalesce: a slider drag sends one command
+        // per step and every write costs an NVS commit. The final value is
+        // flushed on disconnect.
+        const int64_t nowUs = esp_timer_get_time();
+        if (nowUs - _last_volume_save_us >= kVolumeSaveIntervalUs) {
+            _last_volume_save_us = nowUs;
+            Setting::instance().setA2dpVolume(volume);
+        }
+
+        // The controller may have registered for a volume-change
+        // notification; answer it and wait for the next registration.
+        if (_volume_change_registered.exchange(false)) {
+            esp_avrc_rn_param_t rn_param = {};
+            rn_param.volume = volume;
+            esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_VOLUME_CHANGE,
+                                    ESP_AVRC_RN_RSP_CHANGED, &rn_param);
+        }
+        break;
+    }
+
+    case ESP_AVRC_TG_REGISTER_NOTIFICATION_EVT:
+        if (param->reg_ntf.event_id == ESP_AVRC_RN_VOLUME_CHANGE) {
+            _volume_change_registered.store(true);
+            esp_avrc_rn_param_t rn_param = {};
+            rn_param.volume = _a2dp_volume.load();
+            esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_VOLUME_CHANGE,
+                                    ESP_AVRC_RN_RSP_INTERIM, &rn_param);
+        }
+        break;
+    case ESP_AVRC_TG_CONNECTION_STATE_EVT:
+        ESP_LOGI(_XSPK_TAG, "AVRCP Target connection: %s",
+                 param->conn_stat.connected ? "connected" : "disconnected");
+        if (!param->conn_stat.connected) {
+            _volume_change_registered.store(false);
+            // Flush the last level this controller set, then fall back to
+            // the persisted one: the next controller may never send a
+            // volume command of its own.
+            Setting::instance().setA2dpVolume(_a2dp_volume.load());
+            _last_volume_save_us = esp_timer_get_time();
+            const uint8_t savedVolume = Setting::instance().getA2dpVolume();
+            _a2dp_volume.store(savedVolume);
+            _audio_i2s.setOutputVolumeQ15(avrcVolumeToQ15(savedVolume));
+        }
+        break;
+    default:
+        ESP_LOGI(_XSPK_TAG, "AVRCP Target event: %d", event);
+        break;
+    }
 }
 
 bool SpeakerApp::msgDispatch(BtAppCallback callback, uint16_t event, void *p_params, int param_len, BtAppCopyCallback copy_callback, DeepFreeCallback free_callback)
@@ -879,6 +1014,54 @@ void SpeakerApp::playControlCb(UiMusicPlayer::play_ctrl_param_t ctrl_param)
 
 void SpeakerApp::handlePlayControl(uint16_t evt, UiMusicPlayer::play_ctrl_param_t *ctrl_param)
 {
+    AudioSource source = Setting::instance().getAudioSource();
+
+    // AirPlay 1 has no receiver-side transport control, so forward the
+    // on-device buttons to the sender's DACP server. The sender then reports
+    // the resulting state back over RTSP, which keeps the UI in sync.
+    if (source == AudioSource::AIRPLAY) {
+        airplay::RemoteCommand command;
+        switch (ctrl_param->cmd) {
+        case UiMusicPlayer::playControlCmd::PLAY:
+            command = airplay::RemoteCommand::Play;
+            break;
+        case UiMusicPlayer::playControlCmd::PAUSE:
+            command = airplay::RemoteCommand::Pause;
+            break;
+        case UiMusicPlayer::playControlCmd::PREVIOUS:
+            command = airplay::RemoteCommand::Previous;
+            break;
+        case UiMusicPlayer::playControlCmd::NEXT:
+            command = airplay::RemoteCommand::Next;
+            break;
+        default:
+            return;
+        }
+
+        ESP_LOGI(_XSPK_TAG, "AirPlay remote command %d",
+                 static_cast<int>(command));
+
+        // Apply the play/pause state locally as well: it gives immediate
+        // feedback and keeps the button useful when the sender app does not
+        // advertise a DACP control endpoint (next/previous still need DACP).
+        if (command == airplay::RemoteCommand::Play) {
+            _airplayer.setLocalMuted(false);
+        } else if (command == airplay::RemoteCommand::Pause) {
+            _airplayer.setLocalMuted(true);
+        }
+
+        if (!_airplayer.sendRemoteCommand(command)) {
+            ESP_LOGW(_XSPK_TAG,
+                     "AirPlay remote command ignored (no active session)");
+        }
+        return;
+    }
+
+    if (source != AudioSource::A2DP) {
+        ESP_LOGI(_XSPK_TAG, "Play control ignored outside Bluetooth mode");
+        return;
+    }
+
     mute();
 
     _audio_i2s.clearI2sRingbuffer();
@@ -900,6 +1083,30 @@ void SpeakerApp::handlePlayControl(uint16_t evt, UiMusicPlayer::play_ctrl_param_
         esp_avrc_ct_send_passthrough_cmd(allocTransactionLabel(), ESP_AVRC_PT_CMD_FORWARD, ESP_AVRC_PT_CMD_STATE_RELEASED); 
     }
 
+}
+
+void SpeakerApp::applyAlbumArtSetting(bool enabled)
+{
+    if (!enabled) {
+        // The channel stays open but nothing is requested; forget the last
+        // image handle so re-enabling during the same track loads the cover
+        // again instead of treating the response as a repeat.
+        memset(_cover_image_handler, 0, sizeof(_cover_image_handler));
+        return;
+    }
+
+    if (!_bt_connected.load() || !_peer_cover_art_supported.load() ||
+        _cover_art_connected.load()) {
+        return;
+    }
+
+    // Already-connected phone: open the AVRCP cover art channel now, the
+    // CONNECTED event then requests the current track's artwork.
+    esp_err_t err = esp_avrc_ct_cover_art_connect(1024);
+    if (err != ESP_OK) {
+        ESP_LOGW(_XSPK_TAG, "Cover art connect failed: %s",
+                 esp_err_to_name(err));
+    }
 }
 
 void SpeakerApp::registerA2dpSinkSeps(void)
